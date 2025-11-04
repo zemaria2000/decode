@@ -160,7 +160,11 @@ class BaseTree(ABC):
                 - inverse_y/ y (np.ndarray): either the inverse transformed y, or the original if no scaler is provided
         """
         if hasattr(self, "scalerY") and self.scalerY is not None:
-            inverse_y = self.scalerY.inverse_transform(y.reshape(-1, 1)).flatten()
+            if y.ndim == 1:
+                y = y.reshape(-1, 1)
+            inverse_y = self.scalerY.inverse_transform(y)
+            if inverse_y.shape[1] == 1:
+                return inverse_y.flatten()
             return inverse_y
         return y        
     
