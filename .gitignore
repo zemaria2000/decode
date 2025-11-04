@@ -214,3 +214,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Folders for testing
+src/figures
+src/logs
+src/optimisations
+src/results
