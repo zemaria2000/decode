@@ -220,6 +220,7 @@ class RegressionTree(BaseTree):
         aux_ds = final_ds.copy()
         aux_ds = self._scale_inputs(aux_ds)
         aux_preds = self.model.predict(aux_ds)
+        aux_preds = self._inverse_scale_outputs(aux_preds)
         pred_std = np.std(aux_preds)   # Some sort of uncertainty measure
 
         # 3. Generating a textual explanation for the prediction path
