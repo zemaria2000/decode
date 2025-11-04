@@ -39,9 +39,9 @@ class TestRegressionTree(unittest.TestCase):
         # Feature importances
         tree.compute_feature_importance()
 
-        # Plot without boxplots Vs. with boxplots
-        tree.plot_tree(plot_boxplots = False, save_fig = False)
-        tree.plot_tree(plot_boxplots = True, save_fig = False)
+        # # Plot without boxplots Vs. with boxplots
+        # tree.plot_tree(plot_boxplots = False, save_fig = False)
+        # tree.plot_tree(plot_boxplots = True, save_fig = False)
         # Textual explanation of one prediction
         text = tree.extract_prediction_path(self.X[0])
         print(text)
