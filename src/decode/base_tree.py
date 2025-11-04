@@ -3,7 +3,7 @@
 """
 
 import numpy as np
-import tqdm
+from pathlib import Path
 from .utils import *
 from abc import ABC, abstractmethod
 from typing import Union
@@ -14,7 +14,7 @@ import os
 
 class BaseTree(ABC):
 
-    def __init__(self, model, dataset: np.ndarray, targets: np.ndarray, scalerX = None, scalerY = None,feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42):
+    def __init__(self, model, dataset: np.ndarray, targets: np.ndarray, scalerX = None, scalerY = None,feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, auto_create_folders: bool = False, root_path: str = None):
         """
             Args:
                 - model: model instance for the classifier/regressor
@@ -26,6 +26,8 @@ class BaseTree(ABC):
                 - target_names (list): list with all target names for plotting purposes
                 - feature_types (list): list that defines numerical features - 'N' - and categorical features - 'C'. Categorical features will not be considered for normalisation
                 - seed (int): seed for random number generation
+                - auto_create_folders (bool): Defaults at False. If True, it will create folders for optimisation, results, figures, etc., for better organisation
+                - root_path (str): if True, it specifies the specific folder location for all our results
         """
         logger.info("Initialised tree object")
         
@@ -38,6 +40,8 @@ class BaseTree(ABC):
         self.target_names = target_names
         self.feature_types = feature_types
         self.seed = seed
+        self.auto_create_folders = auto_create_folders
+        self.root_path = root_path
 
         np.random.seed(self.seed)
 
@@ -73,27 +77,30 @@ class BaseTree(ABC):
             Simple internal function just to define some basic storage folders
         """
         ###
-        package_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        package_root = Path(__file__).resolve().parent.parent
         cwd = os.getcwd()  # current working directory
+        default_root = cwd if "site-packages" in str(package_root) else package_root
 
-        # Heuristic: if we're running from site-packages, use cwd as project root
-        if "site-packages" in package_root or "dist-packages" in package_root:
-            project_root = cwd
+        # Resolving the paths
+        if self.root_path is not None:
+            root = Path(self.root_path).expanduser()
+            # If relative, resolve against cwd
+            if not root.is_absolute():
+                root = (cwd / root).resolve()
         else:
-            project_root = package_root  # local dev case
-        ### 
+            root = default_root
 
         self.storage = Munch()
         self.storage.folders = Munch(
-            figs = os.path.join(project_root, "figures"),
-            results = os.path.join(project_root, "results"),
-            data = os.path.join(project_root, "datasets"),
-            logs = os.path.join(project_root, "logs"),
-            optimisation = os.path.join(project_root, "optimisations")
+            figs = os.path.join(root, "figures"),
+            results = os.path.join(root, "results"),
+            data = os.path.join(root, "datasets"),
+            logs = os.path.join(root, "logs"),
+            optimisation = os.path.join(root, "optimisations")
         )
-
-        for folder in self.storage.folders.values():
-            os.makedirs(folder, exist_ok=True)
+        if self.auto_create_folders:
+            for folder in self.storage.folders.values():
+                os.makedirs(folder, exist_ok=True)
 
 
     #########################################################
