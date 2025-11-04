@@ -57,7 +57,7 @@ class BaseTree(ABC):
             logger.warning("No feature types have been provided. Considering all features as numerical (may not be aligned with model training...)")
             self.feature_types = ['N' for _ in range(dataset.shape[1])]
         
-        self.numerical_idx = [i for i, feat in enumerate(feature_types) if feat == 'N']
+        self.numerical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'N']
         # Resetting the tree
         self._reset_tree()
 

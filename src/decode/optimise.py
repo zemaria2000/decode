@@ -113,31 +113,42 @@ class Optimise:
         Create a stratified train/test split for regression targets.
         Automatically merges sparse bins to avoid ValueError.
         """
+        # Step 1: Bin continuous target into discrete strata
         bins = np.histogram_bin_edges(self.targets, bins='auto')
         groups = np.digitize(self.targets, bins)
 
-        ## Need to check+ensure if all bins have more than one sample...
-        # Count samples per bin
-        unique, counts = np.unique(groups, return_counts=True)
-        # find sparse bins (fewer than 2 samples)
-        sparse_bins = unique[counts < 2]
-        if len(sparse_bins) > 0:
-            # merge sparse bins into nearest non-sparse bin
-            for sparse_bin in sparse_bins:
-                # find nearest bin index that is not sparse
-                diffs = np.abs(unique - sparse_bin)
-                nearest_bin = unique[np.argmin(diffs[counts >= 2])]
-                groups[groups == sparse_bin] = nearest_bin
-            # verify after merging
+        # Step 2: Iteratively merge sparse bins until all bins have ≥ 2 samples
+        while True:
             unique, counts = np.unique(groups, return_counts=True)
-        # final check: if still only one group, fall back to random split
-        if len(unique) < 2:
-            logger.debug("[Warning] Could not stratify regression targets — using random split.")
+            sparse_mask = counts < 2
+            if not np.any(sparse_mask):
+                break  # all bins ok
+
+            # If all bins are sparse → cannot stratify
+            if np.all(sparse_mask):
+                logger.debug("[Warning] All bins are sparse — using random split.")
+                return train_test_split(
+                    self.dataset, self.targets, test_size=0.2, random_state=self.seed
+                )
+
+            # Merge each sparse bin into its nearest dense bin
+            for sparse_bin in unique[sparse_mask]:
+                dense_bins = unique[~sparse_mask]
+                nearest_bin = dense_bins[np.argmin(np.abs(dense_bins - sparse_bin))]
+                groups[groups == sparse_bin] = nearest_bin
+
+        # Step 3: Final validation
+        unique, counts = np.unique(groups, return_counts=True)
+        if len(unique) < 2 or np.any(counts < 2):
+            logger.debug("[Warning] Could not safely stratify regression targets — using random split.")
             stratify = None
         else:
             stratify = groups
 
-        return train_test_split(self.dataset, self.targets, test_size = 0.2, stratify = stratify, random_state = self.seed)
+        # Step 4: Perform split
+        return train_test_split(
+            self.dataset, self.targets, test_size=0.2, stratify=stratify, random_state=self.seed
+        )
     
     def _generate_hyperparams(self, trial):
         """

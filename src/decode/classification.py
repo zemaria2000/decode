@@ -200,7 +200,7 @@ class ClassificationTree(BaseTree):
         # 2. Extracting relevant information from the tree to generate the text 
         nodes = np.array(path).squeeze()
         feature_indices = np.array(self.FEATURE).squeeze()[nodes]
-        feature_values = np.array(self.VALUE).squeeze()[nodes]
+        feature_values = np.round(np.array(self.VALUE).squeeze()[nodes], 3)
         left_right = np.array(self.LEFT).squeeze()[nodes[1:]] 
         left_right = ['left' if val == 1 else 'right' for val in left_right]
         final_pred_str = self.target_names[pred[0]]

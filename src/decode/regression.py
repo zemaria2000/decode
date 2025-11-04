@@ -209,15 +209,14 @@ class RegressionTree(BaseTree):
         # 2. Extracting relevant information from the tree to generate the text 
         nodes = np.array(path).squeeze()
         feature_indices = np.array(self.FEATURE).squeeze()[nodes]
-        feature_values = np.array(self.VALUE).squeeze()[nodes]
-        target_values = np.array(self.AVG_VALUE).squeeze()[nodes]
+        feature_values = np.round(np.array(self.VALUE).squeeze()[nodes], 3)
+        target_values = np.round(np.array(self.AVG_VALUE).squeeze()[nodes], 3)
         left_right = np.array(self.LEFT).squeeze()[nodes[1:]] 
         left_right = ['left' if val == 1 else 'right' for val in left_right]
         
         final_ds = self.NODE_DS[nodes[-1]]
         aux_ds = final_ds.copy()
-        if self.scalerX is not None:
-            aux_ds[:, self.numerical_idx] = self.scalerX.transform(final_ds[:, self.numerical_idx])
+        aux_ds = self._scale_inputs(aux_ds)
         aux_preds = self.model.predict(aux_ds)
         pred_std = np.std(aux_preds)   # Some sort of uncertainty measure
 
@@ -227,7 +226,7 @@ class RegressionTree(BaseTree):
             # Initial rule == only rule in fact
             text = f"\n\nThe decision tree starts at the root node, with the initial and only rule for this node being: \033[3mif {self.feature_names[feature_indices[0]]} \u2264 {feature_values[0]}, move to the left child; otherwise, move to the right\033[0m.\n    The test sample has value {self.feature_names[feature_indices[0]]} = {sample[0, feature_indices[0]]}, so it reaches the leaf node {nodes[1]}.\n\n"
             # Final text for the prediction
-            text += f"\033[1mThe final regression prediction is {np.round(feature_values[-1], 2)}, with an uncertainty of {np.round(pred_std, 2)}.\033[0m\n"
+            text += f"\033[1mThe final regression prediction is {np.round(target_values[-1], 2)}, with an uncertainty of {np.round(pred_std, 2)}.\033[0m\n"
 
         else:
 

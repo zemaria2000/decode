@@ -7,5 +7,6 @@ __all__ = [
     "BaseTree",
     "RegressionTree",
     "ClassificationTree",
-    "Optimise"
+    "Optimise",
+    
 ]

@@ -109,7 +109,7 @@ def plot_classification_tree(tree, level_spacing: int = 5, hor_spacing: int = 3,
     # Defining all class colors + attributing all classes to a particular color
     if palette is None:  # Standard class coloring if no palette is provided
         palette = plt.get_cmap('Paired')
-        dark_indices = [0, 2, 4, 6, 8, 10]
+        dark_indices = [1, 3, 5, 7, 9, 11]
         dark_colors = [palette(i / palette.N) for i in dark_indices]
         class_colors = []
         for i, _ in enumerate(tree.target_names):
@@ -188,7 +188,7 @@ def plot_regression_tree(tree, box_plots_list: list = None, level_spacing: int =
         return width, height
     
     # Defining manually that the color palette for regression trees is the 'Blues' heatmap from seaborn
-    cmap = sns.color_palette("Blues", as_cmap = True)
+    cmap = sns.color_palette("Blues_r", as_cmap = True)
 
     # Retrieve the coordinates + additional auxiliary variables
     coords = compute_tree_layout(tree.PARENT)
@@ -212,7 +212,7 @@ def plot_regression_tree(tree, box_plots_list: list = None, level_spacing: int =
     face_colors, text_colors, labels = [], [], []
     
     for i in range(len(tree.N_NODE_SAMPLES)):
-        color = to_rgb(cmap(norm(i)))[:3]
+        color = to_rgb(cmap(norm(impurities[i])))[:3]
         face_colors.append(color)
         text_colors.append("white" if _is_dark_color(color) else "black")
 
