@@ -37,7 +37,6 @@ class Optimise:
                 - kwargs: additional kwargs for specific functions
         """
         self._logging_options()
-        logger.info("Initialising an optimisation session...")
 
         self.kwargs = kwargs
         self.model = model
@@ -76,37 +75,12 @@ class Optimise:
             else:
                 self.metric_name = 'r2_score'
         self.metric_fn = getattr(metrics, self.metric_name)
-    
-        # Storage folder for optimisations
-        self._storage_settings()
-
-        logger.debug(f"Important optimisation parameters: objective = {self.metric_name}, direction = {self.direction}")
 
     def _logging_options(self):
         optuna.logging.enable_propagation()
         optuna_logger = logging.getLogger("optuna")
         optuna_logger.handlers = logger.handlers
         optuna_logger.setLevel(logging.INFO)
-
-    def _storage_settings(self):
-        # NOTE: just a copy from the base tree class...
-        """
-            Simple internal function just to define some basic storage folders
-        """
-        ###
-        package_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        cwd = os.getcwd()  # current working directory
-
-        # Heuristic: if we're running from site-packages, use cwd as project root
-        if "site-packages" in package_root or "dist-packages" in package_root:
-            project_root = cwd
-        else:
-            project_root = package_root  # local dev case
-        ### 
-
-        self.storage = Munch()
-        self.storage.optimisation = os.path.join(project_root, "optimisations")
-        os.makedirs(self.storage.optimisation, exist_ok=True)
     
     def _created_stratified_split_regression(self):
         """
@@ -228,56 +202,8 @@ class Optimise:
                 - sampler: None for now, meaning that I always run the same sampler/optimisation approach
                 - n_trials (int): number of optimisation attempts
         """
+        logger.info("Initialising an optimisation session...")
         self.study = optuna.create_study(direction = self.direction, sampler = optuna.samplers.GPSampler(seed = self.seed))
         logger.info(f"New optimisation starting: n_trials = {n_trials}")
         self.study.optimize(self.objective, n_trials = n_trials)
 
-    def store_opt_results(self, opt_name: str = None, store_params: bool = True):
-        """
-            Store the results from the optimisation process, based on the optuna study
-            Args:
-                - opt_name: name of the folder used to store information regarding the optimisation. It is recommended, for instance, that we give the name of the dataset to the folder, for instance
-                - store_params: Flag that enables storage, in a yaml file, of the optimised hyperparams for the DECODE model + additional info
-        """
-
-        # Creating a dataframe with results
-        df = pd.DataFrame()
-        # Other important params
-        other_params = {'metric': self.metric_name, 'opt_direction': self.direction}
-        for i, trial in enumerate(self.study.trials):
-            df = pd.concat([df, pd.concat([pd.DataFrame(trial.params, index = [i]), pd.DataFrame(trial.user_attrs, index = [i]), pd.DataFrame(other_params, index = [i]), pd.DataFrame({'test_score': trial.value}, index = [i])], axis = 1)], axis = 0)
-        df = df.sort_values(by = 'test_score', ascending = False if self.direction == 'maximize' else True)
-        df.reset_index(drop = False, inplace = True)
-        df.rename(columns = {'index': 'trial_no'}, inplace = True)
-
-        # Storing the df in the specific folder
-        target_folder_name = os.path.join(self.storage.optimisation, opt_name if opt_name is not None else datetime.now().strftime("%Y-%m-%d %H-%M-%S"))
-        os.makedirs(target_folder_name, exist_ok = True)
-        df.to_csv(os.path.join(target_folder_name, 'opt_results.csv'))
-
-        # Storing the yaml with main information
-        if store_params:
-            # Filtering to get the simplest tree (lower depth) with the highest possible score
-            performance_mask = df['test_score'] == df['test_score'].max()
-            perf_df = df[performance_mask]
-            perf_df.sort_values(by = 'max_depth', ascending = True, inplace = True) 
-            perf_df = perf_df.reset_index(drop = True)
-            # Storing the hyperparameters
-            store_hyperparams = Munch()
-            store_hyperparams.model_name = type(self.model).__name__
-            store_hyperparams.final_res = np.round(df.loc[0, 'test_score'], 3)
-            store_hyperparams.opt_metric = str(self.metric_name)
-            store_hyperparams.decode_params = Munch(
-                max_depth = df.loc[0, 'max_depth'],
-                imp_threshold = df.loc[0, 'imp_threshold'],
-                n_steps = df.loc[0, 'n_steps'],
-                adaptive = df.loc[0, 'adaptive'],
-                min_samples_split = df.loc[0, 'min_samples_split'],
-                min_impurity_decrease = df.loc[0, 'min_impurity_decrease'],
-                criterium = df.loc[0, 'criterium'],
-                perturb_dataset = df.loc[0, 'perturb_dataset']
-            )
-            store_hyperparams_dict = store_hyperparams.toDict()
-            store_hyperparams_dict = make_serializable(store_hyperparams_dict)
-            with open(os.path.join(target_folder_name, "hyperparams.yaml"), "w") as f:
-                yaml.safe_dump(store_hyperparams_dict, f, sort_keys = False)

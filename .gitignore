@@ -221,3 +221,8 @@ src/logs
 src/optimisations
 src/results
 src/datasets
+tests/figures
+tests/logs
+tests/results
+tests/optimisations
+tests/datasets
