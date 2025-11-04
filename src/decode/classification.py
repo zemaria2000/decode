@@ -14,7 +14,7 @@ import os
 
 class ClassificationTree(BaseTree):
 
-    def __init__(self, model, scalerX = None, scalerY = None, dataset: np.ndarray = None, targets: np.ndarray = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42):
+    def __init__(self, model, scalerX = None, scalerY = None, dataset: np.ndarray = None, targets: np.ndarray = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, auto_create_folders: bool = False, root_path: str = None):
         super().__init__(
             model = model,
             scalerX = scalerX,
@@ -24,7 +24,9 @@ class ClassificationTree(BaseTree):
             feature_names = feature_names,
             target_names = target_names,
             feature_types = feature_types,
-            seed = seed
+            seed = seed,
+            auto_create_folders = auto_create_folders,
+            root_path = root_path,
         )
 
     # Auxiliary methods to conduct bin refinement 

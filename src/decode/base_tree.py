@@ -29,7 +29,6 @@ class BaseTree(ABC):
                 - auto_create_folders (bool): Defaults at False. If True, it will create folders for optimisation, results, figures, etc., for better organisation
                 - root_path (str): if True, it specifies the specific folder location for all our results
         """
-        logger.info("Initialised tree object")
         
         self.model = model
         self.scalerX = scalerX
@@ -62,11 +61,14 @@ class BaseTree(ABC):
             self.feature_types = ['N' for _ in range(dataset.shape[1])]
         
         self.numerical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'N']
+        
         # Resetting the tree
         self._reset_tree()
 
         # Defining storage settings
         self._storage_settings()
+
+        logger.info("Initialised tree object")
 
 
     #########################################################
@@ -79,7 +81,7 @@ class BaseTree(ABC):
         ###
         package_root = Path(__file__).resolve().parent.parent
         cwd = os.getcwd()  # current working directory
-        default_root = cwd if "site-packages" in str(package_root) else package_root
+        default_root = package_root if "site-packages" in str(package_root) else cwd
 
         # Resolving the paths
         if self.root_path is not None:
