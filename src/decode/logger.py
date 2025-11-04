@@ -11,7 +11,7 @@ from datetime import datetime
 # ==========================================================
 
 # --- 1. Locate project root (folder above xai_tree) ---
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+PROJECT_ROOT = os.getcwd()
 
 # --- 2. Define logs directory at project root ---
 LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
@@ -31,7 +31,7 @@ if not logger.handlers:  # Prevent duplicate logs when re-imported
     console_handler.setLevel(logging.INFO)
 
     # File handler
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler = logging.FileHandler(log_file, encoding = "utf-8")
     file_handler.setLevel(logging.DEBUG)
 
     # Formatter
