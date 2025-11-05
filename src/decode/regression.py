@@ -88,7 +88,7 @@ class RegressionTree(BaseTree):
         self.DEPTH.append(0)           
         self.LEAF.append(0)            
         self.PARENT.append(-1)
-        self.AVG_VALUE.append(np.mean(real_values))
+        self.AVG_VALUE.append(np.mean(real_values, axis = 0))
         self.NODE_DS.append(self.dataset.copy())      
 
     def _expand_node(self, 
@@ -131,7 +131,7 @@ class RegressionTree(BaseTree):
         node_imp = mse(inv_preds)
         self.N_NODE_SAMPLES.append(len(inv_preds))
         self.IMPURITY.append(node_imp)
-        self.AVG_VALUE.append(np.mean(inv_preds))
+        self.AVG_VALUE.append(np.mean(inv_preds, axis = 0))
 
         # 1st verification - impurity threshold or max depth
         if node_imp < imp_threshold or current_depth == self.max_depth:
@@ -179,11 +179,14 @@ class RegressionTree(BaseTree):
                 - file_name (str): name of the file to be stored (no need for the extension, I define pdf as default)
 
         """
-        if plot_boxplots:
-            box_plots_list = box_plots(self)
-            plot_regression_tree(self, box_plots_list)
-        else:
+        if self.flag_multi_output:   # To not plot with the boxplots...
             plot_regression_tree(self)
+        else:
+            if plot_boxplots:
+                box_plots_list = box_plots(self)
+                plot_regression_tree(self, box_plots_list)
+            else:
+                plot_regression_tree(self)
         
         if save_fig and file_name is not None:
             plt.savefig(os.path.join(self.storage.folders.figs, f'{file_name}.pdf'), dpi = 300)
@@ -211,7 +214,7 @@ class RegressionTree(BaseTree):
         # 2. Extracting relevant information from the tree to generate the text 
         nodes = np.array(path).squeeze()
         feature_indices = np.array(self.FEATURE).squeeze()[nodes]
-        feature_values = np.round(np.array(self.VALUE).squeeze()[nodes], 3)
+        feature_values = np.array(self.VALUE).squeeze()[nodes]
         target_values = np.round(np.array(self.AVG_VALUE).squeeze()[nodes], 3)
         left_right = np.array(self.LEFT).squeeze()[nodes[1:]] 
         left_right = ['left' if val == 1 else 'right' for val in left_right]
@@ -227,18 +230,18 @@ class RegressionTree(BaseTree):
 
         if len(nodes) <= 2:
             # Initial rule == only rule in fact
-            text = f"\n\nThe decision tree starts at the root node, with the initial and only rule for this node being: \033[3mif {self.feature_names[feature_indices[0]]} \u2264 {feature_values[0]}, move to the left child; otherwise, move to the right\033[0m.\n    The test sample has value {self.feature_names[feature_indices[0]]} = {sample[0, feature_indices[0]]}, so it reaches the leaf node {nodes[1]}.\n\n"
+            text = f"\n\nThe decision tree starts at the root node, with the initial and only rule for this node being: \033[3mif {self.feature_names[feature_indices[0]]} \u2264 {np.round(feature_values[0], 3)}, move to the left child; otherwise, move to the right\033[0m.\n    The test sample has value {self.feature_names[feature_indices[0]]} = {sample[0, feature_indices[0]]}, so it reaches the leaf node {nodes[1]}.\n\n"
             # Final text for the prediction
             text += f"\033[1mThe final regression prediction is {np.round(target_values[-1], 2)}, with an uncertainty of {np.round(pred_std, 2)}.\033[0m\n"
 
         else:
 
             # Initial text for the initial rule
-            text = f"\n\nThe decision tree starts at the root node, with the initial rule being: \033[3mif {self.feature_names[feature_indices[0]]} \u2264 {feature_values[0]}, move to the left child; otherwise, move to the right\033[0m.\n    The test sample has value {self.feature_names[feature_indices[0]]} = {sample[0, feature_indices[0]]}, so it moves to the {left_right[0]} child (node {nodes[1]}).\n"
+            text = f"\n\nThe decision tree starts at the root node, with the initial rule being: \033[3mif {self.feature_names[feature_indices[0]]} \u2264 {np.round(feature_values[0], 3)}, move to the left child; otherwise, move to the right\033[0m.\n    The test sample has value {self.feature_names[feature_indices[0]]} = {sample[0, feature_indices[0]]}, so it moves to the {left_right[0]} child (node {nodes[1]}).\n"
 
             # Cycle for the middle rules
             for i, (index, feature_index, rule_feature_value) in enumerate(zip(nodes[1:-2], feature_indices[1:-2], feature_values[1:-2])):
-                text += f"At node {index}, the rule is: \033[3mif {self.feature_names[feature_index]} \u2264 {rule_feature_value}, move to the left child; otherwise, move to the right\033[0m.\n    The test sample has value {self.feature_names[feature_index]} = {sample[0, feature_index]}, so it moves to the {left_right[index]} child (node {nodes[i+2]}).\n"
+                text += f"At node {index}, the rule is: \033[3mif {self.feature_names[feature_index]} \u2264 {np.round(rule_feature_value, 3)}, move to the left child; otherwise, move to the right\033[0m.\n    The test sample has value {self.feature_names[feature_index]} = {sample[0, feature_index]}, so it moves to the {left_right[index]} child (node {nodes[i+2]}).\n"
 
             # Final text for the last rule
             text += f"At node {nodes[-2]}, the last decision node for this prediction, the final rule is: \033[3mif {self.feature_names[feature_indices[-2]]} \u2264 {feature_values[-2]}, move to the left child; otherwise, move to the right\033[0m.\n     The test sample has value {self.feature_names[feature_indices[-2]]} = {sample[0, feature_indices[-2]]}, so it reaches the leaf node {nodes[-1]}.\n\n"
