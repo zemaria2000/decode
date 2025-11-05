@@ -59,6 +59,9 @@ class RegressionTree(BaseTree):
             Returns:
                 - score (float): the target candidate score
         """
+        # Ensure that we have 2D
+        if len(preds.shape) == 1:
+            preds = preds.reshape(-1, 1)
         if criterium == 'default' or criterium == 'mse':
             return mse(preds)
         elif criterium == 'mae':
