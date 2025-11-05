@@ -63,13 +63,22 @@ class BaseTree(ABC):
         
         self.numerical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'N']
 
+        # Reshaping targets so that they have always 2 dimensions
+        if len(self.targets.shape) == 1:
+            self.targets = self.targets.reshape(-1, 1)
+
         # Resetting the tree
         self._reset_tree()
 
         # Defining storage settings
         self._storage_settings()
 
+        # Internal flag that states if the tree is for multi-output or single_output regression
+        self.flag_multi_output = True if self.targets.shape[1] > 1 else False
+
         logger.info("Initialised tree object")
+
+
 
 
     #########################################################
@@ -160,11 +169,7 @@ class BaseTree(ABC):
                 - inverse_y/ y (np.ndarray): either the inverse transformed y, or the original if no scaler is provided
         """
         if hasattr(self, "scalerY") and self.scalerY is not None:
-            if y.ndim == 1:
-                y = y.reshape(-1, 1)
             inverse_y = self.scalerY.inverse_transform(y)
-            if inverse_y.shape[1] == 1:
-                return inverse_y.flatten()
             return inverse_y
         return y        
     

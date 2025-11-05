@@ -14,9 +14,9 @@ def mse(y: np.ndarray):
         Returns:
             - mse_score (float): the mean squared error for that set of predictions
     """
-    avg_y = np.mean(y)
-    mse_score = (1/len(y))*np.sum((y - avg_y)**2)
-    return mse_score
+    mean_y = np.mean(y, axis=0)
+    sq_dist = np.sum((y - mean_y) ** 2, axis = 1)
+    return np.mean(sq_dist)
 
 # MAE - regression
 def mae(y: np.ndarray):
@@ -27,9 +27,10 @@ def mae(y: np.ndarray):
         Returns:
             - mae_score (float): the mean absolute error for that set of predictions
     """
-    median_y = np.median(y)
-    mae_score = (1/len(y))*np.sum(np.abs(y-median_y))
-    return mae_score
+    median_y = np.median(y, axis = 0)
+    abs_dev = np.abs(y - median_y)
+    l1_dist_per_sample = np.sum(abs_dev, axis = 1)
+    return np.mean(l1_dist_per_sample)
 
 # Possion deviance - regression
 def poisson_deviance(y: np.ndarray):

@@ -194,7 +194,7 @@ def plot_regression_tree(tree, box_plots_list: list = None, level_spacing: int =
     coords = compute_tree_layout(tree.PARENT)
     avg_values = np.array(tree.AVG_VALUE, float).squeeze() # Average values of predictions
     impurities = np.array(tree.IMPURITY, float).squeeze() # Average impurity values
-    norm = Normalize(vmin = impurities.min(), vmax = impurities.max()) # Normalized values for coloring purposes
+    norm = Normalize(vmin = 0, vmax = impurities.max()) # Normalized values for coloring purposes
 
     # Retrieving the coordinates for the target boxplots
     ## leaf coordinates
