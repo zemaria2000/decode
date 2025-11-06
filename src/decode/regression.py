@@ -78,8 +78,7 @@ class RegressionTree(BaseTree):
         """
         
         ## Conducting preds with our model
-        norm_ds = self._scale_inputs(self.dataset)
-        preds = self.model.predict(norm_ds)
+        preds = self.model.predict(self.normalised_dataset)
         real_values = self._inverse_scale_outputs(preds)
 
         ## Appending the necessary information
@@ -92,12 +91,12 @@ class RegressionTree(BaseTree):
         self.LEAF.append(0)            
         self.PARENT.append(-1)
         self.AVG_VALUE.append(np.mean(real_values, axis = 0))
-        self.NODE_DS.append(self.dataset.copy())      
+        self.NODE_DS.append(np.arange(len(self.dataset)))      
 
     def _expand_node(self, 
                      prev_node_idx: int, 
                      current_depth: int, 
-                     dataset: np.ndarray, 
+                     dataset_idx: np.ndarray, 
                      imp_threshold: float, 
                      n_steps: Union[str, int], 
                      adaptive: bool, 
@@ -109,7 +108,7 @@ class RegressionTree(BaseTree):
             Args:  
                 - prev_node_idx (int): parent node index
                 - current_depth (int): current depth in the tree
-                - dataset (np.ndarray): current dataset being evaluated
+                - dataset_idx (np.ndarray): indexes, relative to the original dataset, of the current dataset being assessed
                 - imp_threshold (float): threshold that defines a stopping criteria
                 - n_steps (Union[str, int]): steps approach for discretization
                 - adaptive (bool): whether to implement adaptive discretization
@@ -124,11 +123,10 @@ class RegressionTree(BaseTree):
         self.LEFT.append(1 if left else 0)
         self.PARENT.append(prev_node_idx)
         self.DEPTH.append(current_depth)
-        self.NODE_DS.append(dataset)
+        self.NODE_DS.append(dataset_idx)
 
         # 1. Conducting predictions with the model
-        ds = self._scale_inputs(dataset)
-        preds = self.model.predict(ds)
+        preds = self.model.predict(self.normalised_dataset[dataset_idx])
         inv_preds = self._inverse_scale_outputs(preds)
         # Appending some more info about the node
         node_imp = mse(inv_preds)
@@ -147,8 +145,8 @@ class RegressionTree(BaseTree):
                 logger.debug(f"Stopping split: impurity {node_imp:.4f} < threshold {imp_threshold}")
         else:
             # Conduct the optimisation process for the rule
-            step_info = self._create_auto_steps(dataset, n_steps = n_steps, adaptive = adaptive)
-            score_list = self.execute_trial(dataset, step_info, criterium = criterium, perturb_dataset = perturb_dataset)
+            step_info = self._create_auto_steps(dataset_idx, n_steps = n_steps, adaptive = adaptive)
+            score_list = self.execute_trial(dataset_idx, step_info, criterium = criterium, perturb_dataset = perturb_dataset)
             final_res = self.implement_choice(score_list)
             # In case no target rule was found
             if final_res is None:
@@ -222,10 +220,8 @@ class RegressionTree(BaseTree):
         left_right = np.array(self.LEFT).squeeze()[nodes[1:]] 
         left_right = ['left' if val == 1 else 'right' for val in left_right]
         
-        final_ds = self.NODE_DS[nodes[-1]]
-        aux_ds = final_ds.copy()
-        aux_ds = self._scale_inputs(aux_ds)
-        aux_preds = self.model.predict(aux_ds)
+        final_ds = self.normalised_dataset[self.NODE_DS[nodes[-1]]]
+        aux_preds = self.model.predict(final_ds)
         aux_preds = self._inverse_scale_outputs(aux_preds)
         pred_std = np.std(aux_preds)   # Some sort of uncertainty measure
 
