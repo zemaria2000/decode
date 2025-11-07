@@ -277,47 +277,7 @@ class BaseTree(ABC):
         """ Impurity calculation handled by the subclass """
         pass
 
-    # def _candidate_score(self, dataset_idx: np.ndarray, feature_idx: int, feature_value: float, step_info: dict, criterium: str = 'default', perturb_dataset: bool = False):
-    #     """
-    #         Auxiliary function that automatically calculates the candidate score for a particular split of the dataset
-    #         Args:
-    #             - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
-    #             - feature_idx (int): feature index of the target rule
-    #             - feature_value (int): the value of the feature of the target rule
-    #             - criterium (str): criterium used to compute the loss
-    #             - step_info (dict): provides information about all possible values of a variable for the dataset generation
-    #             - perturb_dataset (bool): whether to perturb target feature values when generating left and right datasets
-    #         Returns:
-    #             - candidate_score (float): overall score for the candidate split
-    #         See https://scikit-learn.org/stable/modules/tree.html#tree-mathematical-formulation for more details
-    #     """
-    #     # 1. Split the original dataset according to the rule
-    #     mask = self.dataset[dataset_idx, feature_idx] <= feature_value
-    #     left_ds = self.normalised_dataset[dataset_idx[mask]]
-    #     right_ds = self.normalised_dataset[dataset_idx[~mask]]
-    #     original_ds = self.normalised_dataset[dataset_idx]
-
-    #     # 2. Checking if the split complies with the min_samples_split requirement
-    #     if left_ds.shape[0] < self.min_samples_split or right_ds.shape[0] < self.min_samples_split:
-    #         return None
-
-    #     # 3. Conduct predictions with our original model for both splits
-    #     left_preds = self.model.predict(left_ds)
-    #     right_preds = self.model.predict(right_ds)
-    #     original_preds = self.model.predict(original_ds)
-
-    #     # 4. Computing the candidate score - the impurity decrease for that particular node
-    #     left_criterium, right_criterium, original_criterium = self._impurity_calculation(preds = left_preds, criterium = criterium), self._impurity_calculation(preds = right_preds, criterium = criterium), self._impurity_calculation(preds = original_preds, criterium = criterium)
-    #     candidate_score = original_criterium - ((left_ds.shape[0]/original_ds.shape[0])*left_criterium + (right_ds.shape[0]/original_ds.shape[0])*right_criterium)
-
-    #     # 5. Checking if it does comply with the min_impurity_decrease requirement
-    #     global_impurity_decrease = (len(original_ds)/len(self.dataset)) * candidate_score
-    #     if global_impurity_decrease < self.min_impurity_decrease:
-    #         return None
-        
-    #     return candidate_score    
-
-    def _candidate_score(self, dataset_idx: np.ndarray, preds: np.ndarray, feature_idx: int, feature_values: np.ndarray, step_info: dict, criterium: str = 'default', perturb_dataset: bool = False):
+    def _candidate_score(self, dataset_idx: np.ndarray, preds: np.ndarray, feature_idx: int, feature_values: np.ndarray, criterium: str = 'default'):
         """
             Auxiliary function that automatically calculates the candidate score for a particular split of the dataset
             Args:
@@ -326,8 +286,6 @@ class BaseTree(ABC):
                 - feature_idx (int): feature index of the target rule
                 - feature_values (np.ndarray): all possible values for the target rule
                 - criterium (str): criterium used to compute the loss
-                - step_info (dict): provides information about all possible values of a variable for the dataset generation
-                - perturb_dataset (bool): whether to perturb target feature values when generating left and right datasets
             Returns:
                 - scores (np.ndarray): score for all candidate splits of a particular feature
             See https://scikit-learn.org/stable/modules/tree.html#tree-mathematical-formulation for more details
@@ -350,9 +308,9 @@ class BaseTree(ABC):
             return np.full(len(feature_values), np.nan)
         
         # Impurity calculations
-        original_impurity = self._impurity_calculation(preds)
-        left_impurities = np.array([self._impurity_calculation(preds[mask]) for mask in masks[valid_mask]])
-        right_impurities = np.array([self._impurity_calculation(preds[~mask]) for mask in masks[valid_mask]])
+        original_impurity = self._impurity_calculation(preds, criterium)
+        left_impurities = np.array([self._impurity_calculation(preds[mask], criterium) for mask in masks[valid_mask]])
+        right_impurities = np.array([self._impurity_calculation(preds[~mask], criterium) for mask in masks[valid_mask]])
         
         # Candidate scores
         candidate_scores = original_impurity - ((n_left_samples[valid_mask]/n_samples)*left_impurities + (n_right_samples[valid_mask]/n_samples)*right_impurities)
@@ -367,7 +325,7 @@ class BaseTree(ABC):
 
         return scores 
 
-    def execute_trial(self, dataset_idx: np.ndarray, preds: np.ndarray, step_info: dict, criterium: str = 'default', perturb_dataset: bool = False):
+    def execute_trial(self, dataset_idx: np.ndarray, preds: np.ndarray, step_info: dict, criterium: str = 'default'):
         """
             Executes a new trial for each feature and its steps, based on the providade dataset
             Args:
@@ -375,7 +333,6 @@ class BaseTree(ABC):
                 - preds (np.ndarray): predictions for the current dataset (self.model.predict(self.normalised_dataset[dataset_idx]))
                 - step_info (dict): dictionary with the feature steps information
                 - criterium (str): str that defines the choosing criterium - "default" by default 
-                - perturb_dataset (bool): whether to perturb target feature values when generating left and right datasets
             Returns:
                 - score_list (list): list of tuples that contemplates (feature_idx, feature_value, candidate_score) for each individual step in each feature considered
         """         
@@ -383,7 +340,7 @@ class BaseTree(ABC):
 
         for feature_idx, feature in enumerate(self.feature_names):
             feature_values = np.array(step_info[feature]['steps'])
-            candidate_scores = self._candidate_score(dataset_idx = dataset_idx, preds = preds, feature_idx = feature_idx, feature_values = feature_values, criterium = criterium, step_info = step_info, perturb_dataset = perturb_dataset)
+            candidate_scores = self._candidate_score(dataset_idx = dataset_idx, preds = preds, feature_idx = feature_idx, feature_values = feature_values, criterium = criterium)
             scores_aux = np.concatenate((np.repeat(feature_idx, len(feature_values))[:, None], feature_values[:, None], candidate_scores[:, None]), axis = 1)
             score_list = np.concatenate((score_list, scores_aux), axis = 0) if score_list is not None else scores_aux
         
@@ -418,8 +375,7 @@ class BaseTree(ABC):
                    adaptive: bool = False,
                    min_samples_split: int = 2,
                    min_impurity_decrease: float = 0.0,
-                   criterium: str = 'default',
-                   perturb_dataset: bool = False):
+                   criterium: str = 'default'):
         """
             Generates the decision tree based on the provided dataset and model
             Args:
@@ -430,16 +386,16 @@ class BaseTree(ABC):
                 - min_samples_split (int): minimum samples required to attempt a split
                 - min_impurity_decrease (float): minimum impurity decrease required to accept a split
                 - criterium (str): the criterium to be used to evaluate candidate nodes of the tree
-                - perturb_dataset (bool): whether to perturb target feature values when generating left and right datasets
         """
 
         logger.info(f"Starting the tree generation process")
-        logger.debug(f"Parameters: max_depth={max_depth}, imp_threshold={imp_threshold}, n_steps={n_steps}, adaptive = {adaptive}, min_samples_split={min_samples_split}, min_impurity_decrease={min_impurity_decrease}, criterium={criterium}, perturb_dataset={perturb_dataset}")
+        logger.debug(f"Parameters: max_depth={max_depth}, imp_threshold={imp_threshold}, n_steps={n_steps}, adaptive = {adaptive}, min_samples_split={min_samples_split}, min_impurity_decrease={min_impurity_decrease}, criterium={criterium}")
 
         # Instantiating by storing the stopping criteria
         self.min_samples_split = min_samples_split
         self.min_impurity_decrease = min_impurity_decrease
         self.max_depth = max_depth
+        self.imp_threshold = imp_threshold
 
         # Clearing, for safety, all tree parameters
         self._reset_tree()
@@ -448,7 +404,7 @@ class BaseTree(ABC):
         original_idx = np.arange(len(self.dataset))
         original_preds = self.model.predict(self.normalised_dataset)
         step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive)
-        final_res = self.execute_trial(original_idx, original_preds, step_info, criterium = criterium, perturb_dataset = perturb_dataset)
+        final_res = self.execute_trial(original_idx, original_preds, step_info, criterium = criterium)
         if final_res is None:
             raise RuntimeError("No valid split found for root node. Try reducing constraints.")    
         # Storing the root info
@@ -480,11 +436,11 @@ class BaseTree(ABC):
 
                 ## 2.2. PROCESS LEFT NODE
                 if len(left_ds_idx) > 0:
-                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = left_ds_idx, preds = left_preds, imp_threshold = imp_threshold, n_steps = n_steps, adaptive = adaptive, criterium = criterium, perturb_dataset = perturb_dataset, left = True)
+                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = left_ds_idx, preds = left_preds, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = True)
 
                 ## 2.3. PROCESS RIGHT NODE
                 if len(right_ds_idx) > 0:
-                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = right_ds_idx, preds = right_preds, imp_threshold = imp_threshold, n_steps = n_steps, adaptive = adaptive, criterium = criterium, perturb_dataset = perturb_dataset, left = False)
+                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = right_ds_idx, preds = right_preds, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = False)
 
         logger.info(f"Tree building process completed: total nodes = {len(self.N_NODE_SAMPLES)}, leaf nodes = {np.sum(self.LEAF)}")
 

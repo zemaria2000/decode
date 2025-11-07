@@ -50,7 +50,7 @@ class RegressionTree(BaseTree):
         return refine_bins
     
     
-    def _impurity_calculation(self, preds: np.ndarray, criterium: str = 'default', **kwargs):
+    def _impurity_calculation(self, preds: np.ndarray, criterium: str = 'default'):
         """
             Impurity calculation based on the criterium chosend
             Args:
@@ -110,11 +110,9 @@ class RegressionTree(BaseTree):
                      current_depth: int, 
                      dataset_idx: np.ndarray, 
                      preds: np.ndarray,
-                     imp_threshold: float, 
                      n_steps: Union[str, int], 
                      adaptive: bool, 
                      criterium: str, 
-                     perturb_dataset: bool, 
                      left: bool):
         """
             Creating a new node based on the previous
@@ -123,11 +121,9 @@ class RegressionTree(BaseTree):
                 - current_depth (int): current depth in the tree
                 - dataset_idx (np.ndarray): indexes, relative to the original dataset, of the current dataset being assessed
                 - preds (np.ndarray): predictions for the current dataset being evaluated
-                - imp_threshold (float): threshold that defines a stopping criteria
                 - n_steps (Union[str, int]): steps approach for discretization
                 - adaptive (bool): whether to implement adaptive discretization
                 - criterium (str): criterium for loss assessment in the tree
-                - perturb_dataset (bool): if we want to perturb dataset during step creation
                 - left (bool): if we are in a left (True) or a right (False) node
         """
         logger.debug(f"Expanding node {prev_node_idx} (depth={self.DEPTH[prev_node_idx]}) → "
@@ -147,18 +143,18 @@ class RegressionTree(BaseTree):
         self.AVG_VALUE.append(np.mean(inv_preds, axis = 0))
 
         # 1st verification - impurity threshold or max depth
-        if node_imp < imp_threshold or current_depth == self.max_depth:
+        if node_imp < self.imp_threshold or current_depth == self.max_depth:
             self.LEAF.append(1)
             self.VALUE.append(None)
             self.FEATURE.append(None)
             if current_depth == self.max_depth:
                 logger.debug(f"Max depth reached at node {len(self.FEATURE)-1} -> leaf node")
-            if node_imp < imp_threshold:
-                logger.debug(f"Stopping split: impurity {node_imp:.4f} < threshold {imp_threshold}")
+            if node_imp < self.imp_threshold:
+                logger.debug(f"Stopping split: impurity {node_imp:.4f} < threshold {self.imp_threshold}")
         else:
             # Conduct the optimisation process for the rule
             step_info = self._create_auto_steps(dataset_idx, n_steps = n_steps, adaptive = adaptive)
-            final_res = self.execute_trial(dataset_idx, preds, step_info, criterium = criterium, perturb_dataset = perturb_dataset)
+            final_res = self.execute_trial(dataset_idx, preds, step_info, criterium = criterium)
             # In case no target rule was found
             if final_res is None:
                 logger.warning(f"No acceptable candidate split was found for node {prev_node_idx}. Marking it as a leaf node")
