@@ -11,6 +11,7 @@ from .logger import logger
 from munch import Munch
 import os, yaml
 import pandas as pd
+from joblib import Parallel, delayed
 
 
 class BaseTree(ABC):
@@ -29,6 +30,7 @@ class BaseTree(ABC):
                 - seed (int): seed for random number generation
                 - auto_create_folders (bool): Defaults at False. If True, it will create folders for optimisation, results, figures, etc., for better organisation
                 - root_path (str): if True, it specifies the specific folder location for all our results
+                - n_jobs (int): useful for parallelisation of independent
         """
         
         self.model = model
@@ -338,7 +340,7 @@ class BaseTree(ABC):
             logger.debug(f"Node {len(self.FEATURE) + 1}: {len(score_list)} admissible splits were found")
 
         return score_list
-
+    
     
     def implement_choice(self, score_list: list):       
         """

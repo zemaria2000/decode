@@ -26,7 +26,7 @@ class ClassificationTree(BaseTree):
             feature_types = feature_types,
             seed = seed,
             auto_create_folders = auto_create_folders,
-            root_path = root_path,
+            root_path = root_path
         )
 
     # Auxiliary methods to conduct bin refinement 
