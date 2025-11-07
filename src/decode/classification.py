@@ -65,7 +65,7 @@ class ClassificationTree(BaseTree):
             return gini(preds_dist)
 
 
-    def _initialise_root_node(self, final_res):
+    def _initialise_root_node(self, final_res, original_preds):
         """
             Initialising the root node information
             Args:
@@ -92,6 +92,7 @@ class ClassificationTree(BaseTree):
                      prev_node_idx: int, 
                      current_depth: int, 
                      dataset_idx: np.ndarray, 
+                     preds: np.ndarray,
                      imp_threshold: float, 
                      n_steps: Union[str, int], 
                      adaptive: bool, 
@@ -104,6 +105,7 @@ class ClassificationTree(BaseTree):
                 - prev_node_idx (int): parent node index
                 - current_depth (int): current depth in the tree
                 - dataset_idx (np.ndarray): indexes, relative to the original dataset, of the current dataset being assessed
+                - preds (np.ndarray): predictions for the current dataset being evaluated
                 - imp_threshold (float): threshold that defines a stopping criteria
                 - n_steps (Union[str, int]): steps approach for discretization
                 - adaptive (bool): whether to implement adaptive discretization
@@ -120,10 +122,8 @@ class ClassificationTree(BaseTree):
         self.DEPTH.append(current_depth)
         self.NODE_DS.append(dataset_idx)
 
-        # 1. Conducting predictions with the model
-        preds = self.model.predict(self.normalised_dataset[dataset_idx])
+        # 1. Initial information for the tree
         preds_dist = np.bincount(preds, minlength = len(self.target_names))
-        # Appending some more info about the node
         node_imp = gini(preds_dist)
         self.N_NODE_SAMPLES.append(len(preds))
         self.IMPURITY.append(node_imp)
@@ -142,8 +142,7 @@ class ClassificationTree(BaseTree):
         else:
             # Conduct the optimisation process for the rule
             step_info = self._create_auto_steps(dataset_idx, n_steps = n_steps, adaptive = adaptive)
-            score_list = self.execute_trial(dataset_idx, step_info, criterium = criterium, perturb_dataset = perturb_dataset)
-            final_res = self.implement_choice(score_list)
+            final_res = self.execute_trial(dataset_idx, preds, step_info, criterium = criterium, perturb_dataset = perturb_dataset)
             # In case no target rule was found
             if final_res is None:
                 logger.warning(f"No acceptable candidate split was found for node {prev_node_idx}. Marking it as a leaf node")
