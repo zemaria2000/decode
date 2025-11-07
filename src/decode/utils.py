@@ -3,6 +3,7 @@
 """
 
 import numpy as np
+import pickle
 
 
 # MSE - regression
@@ -42,7 +43,7 @@ def poisson_deviance(y: np.ndarray):
             - poission (float): the mean poisson deviance for that set of predictions
     """        
     avg_y = np.mean(y)
-    poisson = (2/len(y))*np.sum(y*np.log(y/avg_y)-y+avg_y)
+    poisson = (2/len(y))*np.sum(y*np.log(y/avg_y) - y + avg_y)
     return poisson
 
 # Gini score - classification
@@ -88,3 +89,13 @@ def make_serializable(obj):
         return bool(obj)
     else:
         return obj
+    
+# Check if a function is pickable (useful for parallelization)
+def is_picklable(obj):
+    try:
+        pickle.dumps(obj)
+    except TypeError:
+        return False
+    except AttributeError:
+        return True
+    return True

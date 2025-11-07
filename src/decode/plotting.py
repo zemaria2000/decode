@@ -330,7 +330,12 @@ def box_plots(tree, only_leaf: bool = True):
 
     box_plots = []
 
-    for i, ds in enumerate(tree.NODE_DS):
+    # List of datasets for each node
+    node_ds_list = []
+    for ds_idx in tree.NODE_DS:
+        node_ds_list.append(tree.normalised_dataset[ds_idx])
+
+    for i, ds in enumerate(node_ds_list):
         
         if only_leaf:
             if tree.LEAF[i] == 0:
@@ -338,8 +343,7 @@ def box_plots(tree, only_leaf: bool = True):
                 continue
         
         # 1. Making predictions on the dataset for the node
-        input = tree._scale_inputs(ds)
-        preds = tree.model.predict(input)
+        preds = tree.model.predict(ds)
         output = tree._inverse_scale_outputs(preds)
         # Creating now the box plot figure
         fig, ax = plt.subplots(figsize = (4, 2))
