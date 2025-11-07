@@ -5,7 +5,7 @@
 # xai_tree/regression.py
 import numpy as np
 from .base_tree import BaseTree
-from .utils import mse, mae, poisson_deviance
+from .utils import mse, msle, mae, poisson_deviance, huber
 from typing import Union
 from .plotting import plot_regression_tree, box_plots
 import matplotlib.pyplot as plt
@@ -50,7 +50,7 @@ class RegressionTree(BaseTree):
         return refine_bins
     
     
-    def _impurity_calculation(self, preds: np.ndarray, criterium: str = 'default'):
+    def _impurity_calculation(self, preds: np.ndarray, criterium: str = 'default', **kwargs):
         """
             Impurity calculation based on the criterium chosend
             Args:
@@ -66,8 +66,20 @@ class RegressionTree(BaseTree):
             return mse(preds)
         elif criterium == 'mae':
             return mae(preds)
+        elif criterium == 'msle':
+            if np.min(preds) > -1:
+                return msle(preds)
+            else:
+                logger.warning("MSLE can only be deployed if y > -1. Resorting to mse")
+                return mse(preds)
         elif criterium == 'poisson':
-            return poisson_deviance(preds)
+            if np.min(preds) > 0:
+                return poisson_deviance(preds)
+            else:
+                logger.warning("Poisson deviance can only be deployed if y > -1. Resorting to mse")
+                return mse(preds)
+        elif criterium == 'huber':
+            return huber(preds)
         
 
     def _initialise_root_node(self, final_res):

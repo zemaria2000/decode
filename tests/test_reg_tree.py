@@ -6,19 +6,19 @@ from decode import RegressionTree
 from sklearn.linear_model import LinearRegression
 from sklearn.datasets import make_regression
 import unittest
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 
 class TestRegressionTree(unittest.TestCase):
 
     def setUp(self):
-        self.X, self.y = make_regression(n_samples = 200, n_features = 5, n_targets = 2)
+        self.X, self.y = make_regression(n_samples = 200, n_features = 5, n_targets = 1)
         if self.X.ndim == 1:
             self.X = self.X.reshape(-1, 1)
         if self.y.ndim == 1:
             self.y = self.y.reshape(-1, 1)
         self.model = LinearRegression()
-        self.scalerX, self.scalerY = StandardScaler().fit(self.X), StandardScaler().fit(self.y)
+        self.scalerX, self.scalerY = StandardScaler().fit(self.X), MinMaxScaler().fit(self.y)
         X_scaled, y_scaled = self.scalerX.transform(self.X), self.scalerY.transform(self.y) 
         self.model.fit(X_scaled, y_scaled)
 
@@ -33,7 +33,7 @@ class TestRegressionTree(unittest.TestCase):
                         imp_threshold = 0.05,
                         min_samples_split = 2,
                         min_impurity_decrease = 0,
-                        criterium = 'mae')
+                        criterium = 'msle')
         
         # Tree predictions
         # Entire dataset

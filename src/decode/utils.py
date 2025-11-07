@@ -19,6 +19,20 @@ def mse(y: np.ndarray):
     sq_dist = np.sum((y - mean_y) ** 2, axis = 1)
     return np.mean(sq_dist)
 
+# MSLE - mean squared log error
+# NOTE: Only works for targets that are larger than -1!!
+def msle(y: np.ndarray):
+    """
+        Computing the mean squared log error for a particular set of predictions
+        Args:
+            - y (np.ndarray): Array of output predictions
+        Returns:
+            - msle_score (float): the mean squared logarithmic error for that set of predictions
+    """
+    mean_y = np.mean(y, axis=0)
+    sq_dist = np.sum((np.log(1+y) - np.log(1+mean_y)) ** 2, axis = 1)
+    return np.mean(sq_dist)
+
 # MAE - regression
 def mae(y: np.ndarray):
     """
@@ -32,6 +46,27 @@ def mae(y: np.ndarray):
     abs_dev = np.abs(y - median_y)
     l1_dist_per_sample = np.sum(abs_dev, axis = 1)
     return np.mean(l1_dist_per_sample)
+
+# Huber loss
+def huber(y: np.ndarray):
+    """
+        Computing the huber loss for a particular set of predictions
+        Args:
+            - y (np.ndarray): Array of output predictions
+        Returns:
+            - huber_score (float): the mean absolute error for that set of predictions
+    """
+    # delta value
+    delta = np.std(y, axis = 0)
+    # huber loss
+    mean_y = np.mean(y, axis = 0)
+    diff_y = y - mean_y
+    abs_diff = np.abs(diff_y)  # Useful for determining the huber loss criterium
+    mask = abs_diff <= delta
+    loss_per_pred_dim = np.where(mask, 0.5*(diff_y**2), delta*(abs_diff - 0.5*delta))
+
+    return np.mean(loss_per_pred_dim)
+
 
 # Possion deviance - regression
 def poisson_deviance(y: np.ndarray):
