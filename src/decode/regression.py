@@ -71,7 +71,8 @@ class RegressionTree(BaseTree):
                 return msle(preds)
             else:
                 logger.warning("MSLE can only be deployed if y > -1. Resorting to mse")
-                return mse(preds)
+                raise ValueError("MSLE can only be deployed if y > -1")
+                # return mse(preds)
         elif criterium == 'poisson':
             if np.min(preds) > 0:
                 return poisson_deviance(preds)
