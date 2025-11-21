@@ -14,7 +14,7 @@ This library is currently compatible with any supervised ML model, and able to p
 ## Running unit tests
 
 Currently, two unit tests are developed that allow for testing the robustness of a classification and a regression tree, and to test all methods associated with those. These unit tests were written in [unittest](https://docs.python.org/3/library/unittest.html).
-Please run the folloing commands to execute the unit tests
+Please run the following commands to execute the unit tests
 
 ```bash
 python -m venv venv
