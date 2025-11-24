@@ -170,10 +170,13 @@ class ClassificationTree(BaseTree):
         """
         plot_classification_tree(self)
                 
-        if save_fig and file_name is not None:
+        if save_fig:
+            if file_name is None:
+                logger.warning("[WARNING] You have chosen to save the figure, but no file name was given. Using 'classification_tree' as default.")
+                file_name = 'classification_tree'
+            # Creating the folder if it does not exist
+            os.makedirs(self.storage.folders.figs, exist_ok = True)
             plt.savefig(os.path.join(self.storage.folders.figs, f'{file_name}.pdf'), dpi = 300)
-        # plt.show()
-
 
     def extract_prediction_path(self, sample: np.array):
         """

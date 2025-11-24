@@ -16,7 +16,7 @@ from joblib import Parallel, delayed
 
 class BaseTree(ABC):
 
-    def __init__(self, model, dataset: np.ndarray, targets: np.ndarray, scalerX = None, scalerY = None,feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, auto_create_folders: bool = False, root_path: str = None):
+    def __init__(self, model, dataset: np.ndarray, targets: np.ndarray, scalerX = None, scalerY = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, root_path: str = None):
         """
             Args:
                 - model: model instance for the classifier/regressor
@@ -28,8 +28,7 @@ class BaseTree(ABC):
                 - target_names (list): list with all target names for plotting purposes
                 - feature_types (list): list that defines numerical features - 'N' - and categorical features - 'C'. Categorical features will not be considered for normalisation
                 - seed (int): seed for random number generation
-                - auto_create_folders (bool): Defaults at False. If True, it will create folders for optimisation, results, figures, etc., for better organisation
-                - root_path (str): if True, it specifies the specific folder location for all our results
+                - root_path (str): specific path to store results. If not given, it stores in the current working directory, inly when required
                 - n_jobs (int): useful for parallelisation of independent
         """
         
@@ -42,7 +41,6 @@ class BaseTree(ABC):
         self.target_names = target_names
         self.feature_types = feature_types
         self.seed = seed
-        self.auto_create_folders = auto_create_folders
         self.root_path = root_path
 
         np.random.seed(self.seed)
@@ -93,31 +91,25 @@ class BaseTree(ABC):
         """
             Simple internal function just to define some basic storage folders
         """
-        ###
-        package_root = Path(__file__).resolve().parent.parent
-        cwd = os.getcwd()  # current working directory
-        default_root = package_root if "site-packages" in str(package_root) else cwd
+        # Base folders for storage
+        self.storage = Munch()
+        self.storage.folders = Munch(
+            figs = os.path.join(root, "figures"),
+            results = os.path.join(root, "results"),
+            data = os.path.join(root, "datasets"),
+            logs = os.path.join(root, "logs")
+        )
 
         # Resolving the paths
         if self.root_path is not None:
             root = Path(self.root_path).expanduser()
             # If relative, resolve against cwd
             if not root.is_absolute():
-                root = (cwd / root).resolve()
+                self.root = (cwd / root).resolve()
         else:
-            root = default_root
-
-        self.storage = Munch()
-        self.storage.folders = Munch(
-            figs = os.path.join(root, "figures"),
-            results = os.path.join(root, "results"),
-            data = os.path.join(root, "datasets"),
-            logs = os.path.join(root, "logs"),
-            optimisation = os.path.join(root, "optimisations")
-        )
-        if self.auto_create_folders:
-            for folder in self.storage.folders.values():
-                os.makedirs(folder, exist_ok=True)
+            cwd = os.getcwd()  # current working directory
+            default_root = cwd
+            self.root = default_root
 
 
     #########################################################
