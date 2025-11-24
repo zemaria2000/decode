@@ -91,14 +91,6 @@ class BaseTree(ABC):
         """
             Simple internal function just to define some basic storage folders
         """
-        # Base folders for storage
-        self.storage = Munch()
-        self.storage.folders = Munch(
-            figs = os.path.join(root, "figures"),
-            results = os.path.join(root, "results"),
-            data = os.path.join(root, "datasets"),
-            logs = os.path.join(root, "logs")
-        )
 
         # Resolving the paths
         if self.root_path is not None:
@@ -111,6 +103,15 @@ class BaseTree(ABC):
             default_root = cwd
             self.root = default_root
         
+        # Base folders for storage
+        self.storage = Munch()
+        self.storage.folders = Munch(
+            figs = os.path.join(self.root, "figures"),
+            results = os.path.join(self.root, "results"),
+            data = os.path.join(self.root, "datasets"),
+            logs = os.path.join(self.root, "logs")
+        )
+
         # Creating the logs folders
         os.makedirs(os.path.join(self.root, self.storage.folders.logs), exist_ok = True)
 

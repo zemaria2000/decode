@@ -14,7 +14,7 @@ import os
 
 class RegressionTree(BaseTree):
 
-    def __init__(self, model, scalerX = None, scalerY = None, dataset: np.ndarray = None, targets: np.ndarray = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, auto_create_folders: bool = False, root_path: str = None):
+    def __init__(self, model, scalerX = None, scalerY = None, dataset: np.ndarray = None, targets: np.ndarray = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, root_path: str = None):
         super().__init__(
             model = model,
             scalerX = scalerX,
@@ -227,7 +227,7 @@ class RegressionTree(BaseTree):
         nodes = np.array(path).squeeze()
         feature_indices = np.array(self.FEATURE).squeeze()[nodes]
         feature_values = np.array(self.VALUE).squeeze()[nodes]
-        target_values = np.round(np.array(self.AVG_VALUE).squeeze()[nodes], 3)
+        target_values = np.array(self.AVG_VALUE).squeeze()[nodes]
         left_right = np.array(self.LEFT).squeeze()[nodes[1:]] 
         left_right = ['left' if val == 1 else 'right' for val in left_right]
         
@@ -251,7 +251,7 @@ class RegressionTree(BaseTree):
 
             # Cycle for the middle rules
             for i, (index, feature_index, rule_feature_value) in enumerate(zip(nodes[1:-2], feature_indices[1:-2], feature_values[1:-2])):
-                text += f"At node {index}, the rule is: \033[3mif {self.feature_names[feature_index]} \u2264 {np.round(rule_feature_value, 3)}, move to the left child; otherwise, move to the right\033[0m.\n    The test sample has value {self.feature_names[feature_index]} = {sample[0, feature_index]}, so it moves to the {left_right[index]} child (node {nodes[i+2]}).\n"
+                text += f"At node {index}, the rule is: \033[3mif {self.feature_names[feature_index]} \u2264 {np.round(rule_feature_value, 3)}, move to the left child; otherwise, move to the right\033[0m.\n    The test sample has value {self.feature_names[feature_index]} = {sample[0, feature_index]}, so it moves to the {left_right[i+1]} child (node {nodes[i+2]}).\n"
 
             # Final text for the last rule
             text += f"At node {nodes[-2]}, the last decision node for this prediction, the final rule is: \033[3mif {self.feature_names[feature_indices[-2]]} \u2264 {feature_values[-2]}, move to the left child; otherwise, move to the right\033[0m.\n     The test sample has value {self.feature_names[feature_indices[-2]]} = {sample[0, feature_indices[-2]]}, so it reaches the leaf node {nodes[-1]}.\n\n"
