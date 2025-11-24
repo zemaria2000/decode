@@ -25,7 +25,6 @@ class ClassificationTree(BaseTree):
             target_names = target_names,
             feature_types = feature_types,
             seed = seed,
-            auto_create_folders = auto_create_folders,
             root_path = root_path
         )
 
