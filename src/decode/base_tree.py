@@ -110,6 +110,9 @@ class BaseTree(ABC):
             cwd = os.getcwd()  # current working directory
             default_root = cwd
             self.root = default_root
+        
+        # Creating the logs folders
+        os.makedirs(os.path.join(self.root, self.storage.folders.logs), exist_ok = True)
 
 
     #########################################################
