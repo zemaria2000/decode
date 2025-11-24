@@ -29,11 +29,11 @@ class TestRegressionTree(unittest.TestCase):
                               scalerY = self.scalerY,
                               dataset = self.X,
                               targets = self.y)
-        tree.build_tree(max_depth = 3,
+        tree.build_tree(max_depth = 5,
                         imp_threshold = 0.05,
                         min_samples_split = 2,
                         min_impurity_decrease = 0,
-                        criterium = 'msle')
+                        criterium = 'mse')
         
         # Tree predictions
         # Entire dataset

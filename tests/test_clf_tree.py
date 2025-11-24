@@ -21,7 +21,7 @@ class TestClassificationTree(unittest.TestCase):
                               scalerY = None,
                               dataset = self.X,
                               targets = self.y)
-        tree.build_tree(max_depth = 3,
+        tree.build_tree(max_depth = 5,
                         imp_threshold = 0.05,
                         min_samples_split = 2,
                         min_impurity_decrease = 0)
