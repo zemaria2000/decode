@@ -1,5 +1,10 @@
 """
-    Testing all features for the regression tree
+    Testing all features for the regression tree, which include:
+        - Tree building process based on regressor
+        - Making the predictions for both an entire dataset and one single sample
+        - Computing feature importances
+        - Plotting the tree
+        - Extracting a textual explanation for one single prediction
 """
 
 from decode import RegressionTree
@@ -23,30 +28,29 @@ class TestRegressionTree(unittest.TestCase):
         self.model.fit(X_scaled, y_scaled)
 
     def test_reg_tree_features(self):
-        # Tree building
+        # Tree initialisation
         tree = RegressionTree(model = self.model,
                               scalerX = self.scalerX,
                               scalerY = self.scalerY,
                               dataset = self.X,
                               targets = self.y)
+        # Tree building process
         tree.build_tree(max_depth = 5,
                         imp_threshold = 0.05,
                         min_samples_split = 2,
                         min_impurity_decrease = 0,
                         criterium = 'mse')
         
-        # Tree predictions
-        # Entire dataset
+        # Tree predictions for entire dataset + one sample
         preds, paths = tree.make_predictions(self.X)
-        # One sample
         one_pred, one_path = tree.make_predictions(self.X[0])
 
-        # Feature importances
+        # Computing feature importances
         tree.compute_feature_importance()
 
-        # # Plot without boxplots Vs. with boxplots
-        # tree.plot_tree(plot_boxplots = False, save_fig = False)
+        # Plotting tree
         tree.plot_tree(plot_boxplots = True, save_fig = False)
+
         # Textual explanation of one prediction
         text = tree.extract_prediction_path(self.X[0])
         print(text)
