@@ -30,7 +30,8 @@ class TestClassificationTree(unittest.TestCase):
         tree.build_tree(max_depth = 5,
                         imp_threshold = 0.05,
                         min_samples_split = 2,
-                        min_impurity_decrease = 0)
+                        min_impurity_decrease = 0,
+                        class_weights = 'balanced')
         
         # Tree predictions for entire dataset + one sample
         preds, paths = tree.make_predictions(self.X)

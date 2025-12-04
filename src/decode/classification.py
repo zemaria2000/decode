@@ -58,24 +58,29 @@ class ClassificationTree(BaseTree):
         """
         # Auxiliary step for calculating the prediction distribution
         preds_dist = np.bincount(preds, minlength=len(self.target_names))
+        if self.class_weights is not None:
+            probs = (list(self.class_weights.values())*preds_dist)/np.sum(list(self.class_weights.values())*preds_dist)
+        else:
+            probs = preds_dist/np.sum(preds_dist)
         if criterium == 'default' or criterium == 'log_loss':
-            return log_loss(preds_dist)
+            return log_loss(probs)
         elif criterium == 'gini':
-            return gini(preds_dist)
+            return gini(probs)
 
 
-    def _initialise_root_node(self, final_res, original_preds):
+    def _initialise_root_node(self, final_res, original_preds: np.ndarray = None):
         """
             Initialising the root node information
             Args:
                 - final_res (tuple): tuple that comprises the best candidate score, in the form of (feature_idx, feature_value, candidate_score)
+                - original_preds (np.ndarray): original predictions for the entire dataset
         """
         # Auxiliary variable - class distribution for the original targets
         target_dist = np.unique(self.targets, return_counts = True)[1]
 
         ## Appending the necessary information
         self.N_NODE_SAMPLES.append(len(self.dataset))
-        self.IMPURITY.append(gini(target_dist))
+        self.IMPURITY.append(self._impurity_calculation(original_preds, 'gini'))
         self.VALUE.append(final_res[1])
         self.FEATURE.append(int(final_res[0]))
         self.LEFT.append(0)                      
@@ -118,8 +123,8 @@ class ClassificationTree(BaseTree):
         self.NODE_DS.append(dataset_idx)
 
         # 1. Initial information for the tree
+        node_imp = self._impurity_calculation(preds, 'gini')
         preds_dist = np.bincount(preds, minlength = len(self.target_names))
-        node_imp = gini(preds_dist)
         self.N_NODE_SAMPLES.append(len(preds))
         self.IMPURITY.append(node_imp)
         self.CLASS.append(np.argmax(preds_dist))

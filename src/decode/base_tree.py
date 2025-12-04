@@ -364,6 +364,23 @@ class BaseTree(ABC):
     def _expand_node(self, prev_node_idx: int, current_depth: int, dataset: np.ndarray, imp_threshold: float, n_steps: Union[str, int], adaptive: bool, criterium: str, perturb_dataset: bool, left: bool):
         """ Function handled by the subclass - expanding a particular node """
 
+    def _compute_class_weights(self, class_weights: Union[str, dict] = None):
+        """
+            Internal function, only actually relevant for classification problems, that computes the class weights based on the dataset
+            Args:
+                - class_weights (str/dict): only relevant for classification problems. If 'str' and 'balanced', it will automatically compute the class weights based on the dataset. If 'dict', it will use the provided dictionary to weight each class accordingly           
+        """
+        if isinstance(class_weights, str) and class_weights == 'balanced':
+            # Computing the class weights based on the dataset + pre-computed formula (based on sklearn's one)
+            n_samples, n_classes = len(self.targets), len(np.unique(self.targets))
+            class_counts = np.bincount(self.targets.flatten().astype(int))
+            self.class_weights = {i: n_samples/(n_classes*class_counts[i]) for i in range(n_classes)}
+        elif isinstance(class_weights, dict):
+            self.class_weights = class_weights
+        else:
+            self.class_weights = None
+
+
     def build_tree(self, 
                    max_depth: int = 5,
                    imp_threshold: float = 0.0,
@@ -371,7 +388,8 @@ class BaseTree(ABC):
                    adaptive: bool = False,
                    min_samples_split: int = 2,
                    min_impurity_decrease: float = 0.0,
-                   criterium: str = 'default'):
+                   criterium: str = 'default',
+                   class_weights: Union[None, str, dict] = None):
         """
             Generates the decision tree based on the provided dataset and model
             Args:
@@ -382,6 +400,7 @@ class BaseTree(ABC):
                 - min_samples_split (int): minimum samples required to attempt a split
                 - min_impurity_decrease (float): minimum impurity decrease required to accept a split
                 - criterium (str): the criterium to be used to evaluate candidate nodes of the tree
+                - class_weights (str/dict/None): only relevant for classification problems. If 'str' and 'balanced', it will automatically compute the class weights based on the dataset. If 'dict', it will use the provided dictionary to weight each class accordingly
         """
 
         logger.info(f"Starting the tree generation process")
@@ -392,6 +411,9 @@ class BaseTree(ABC):
         self.min_impurity_decrease = min_impurity_decrease
         self.max_depth = max_depth
         self.imp_threshold = imp_threshold
+
+        # Handling class weights for classification problems
+        self._compute_class_weights(class_weights)
 
         # Clearing, for safety, all tree parameters
         self._reset_tree()

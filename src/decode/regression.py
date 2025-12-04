@@ -95,7 +95,7 @@ class RegressionTree(BaseTree):
 
         ## Appending the necessary information
         self.N_NODE_SAMPLES.append(len(self.dataset))
-        self.IMPURITY.append(mse(real_values))
+        self.IMPURITY.append(self._impurity_calculation(real_values, 'mse'))
         self.VALUE.append(final_res[1])
         self.FEATURE.append(int(final_res[0]))
         self.LEFT.append(0)                      
@@ -137,7 +137,7 @@ class RegressionTree(BaseTree):
 
         # 1. Initial information for the tree
         inv_preds = self._inverse_scale_outputs(preds)
-        node_imp = mse(inv_preds)
+        node_imp = self._impurity_calculation(inv_preds, 'mse')
         self.N_NODE_SAMPLES.append(len(inv_preds))
         self.IMPURITY.append(node_imp)
         self.AVG_VALUE.append(np.mean(inv_preds, axis = 0))

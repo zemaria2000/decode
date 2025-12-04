@@ -82,27 +82,26 @@ def poisson_deviance(y: np.ndarray):
     return poisson
 
 # Gini score - classification
-def gini(dist: np.ndarray):
+def gini(probs: np.ndarray):
     """
         Computing the gini impurity score for a given class distribution
         Args:
-            - dist (np.ndarray): Array of class distributions
+            - probs (np.ndarray): Array of (weighted) class probabilities
         Returns:
             - gini (float): gini impurity score
     """
-    gini = 1 - np.sum((dist/np.sum(dist))**2)
+    gini = np.sum(probs * (1 - probs))
     return gini
 
 # Log loss - classification
-def log_loss(dist: np.ndarray):
+def log_loss(probs: np.ndarray):
     """
         Computing the log loss score for a given class distribution
         Args:
-            - dist (np.ndarray): Array of class distributions
+            - probs (np.ndarray): Array of (weighted) class probabilities
         Returns:
             - log_loss (float): log loss score
     """
-    probs = dist/max(1, np.sum(dist))
     probs = np.clip(probs, 1e-12, 1.0) # To prevent divisions by zero
     log_loss = - np.sum(probs*np.log(probs))/np.log(2)
     return log_loss
