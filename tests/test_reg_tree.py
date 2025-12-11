@@ -13,7 +13,6 @@ from sklearn.datasets import make_regression
 import unittest
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
-
 class TestRegressionTree(unittest.TestCase):
 
     def setUp(self):

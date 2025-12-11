@@ -12,11 +12,11 @@ from munch import Munch
 import os, yaml
 import pandas as pd
 from joblib import Parallel, delayed
-
+import logging 
 
 class BaseTree(ABC):
 
-    def __init__(self, model, dataset: np.ndarray, targets: np.ndarray, scalerX = None, scalerY = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, root_path: str = None):
+    def __init__(self, model, dataset: np.ndarray, targets: np.ndarray, scalerX = None, scalerY = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, root_path: str = None, use_logging: bool = True):
         """
             Args:
                 - model: model instance for the classifier/regressor
@@ -29,7 +29,7 @@ class BaseTree(ABC):
                 - feature_types (list): list that defines numerical features - 'N' - and categorical features - 'C'. Categorical features will not be considered for normalisation
                 - seed (int): seed for random number generation
                 - root_path (str): specific path to store results. If not given, it stores in the current working directory, inly when required
-                - n_jobs (int): useful for parallelisation of independent
+                - logging (bool): flag to enable or disable logging
         """
         
         self.model = model
@@ -78,6 +78,12 @@ class BaseTree(ABC):
 
         # Internal flag that states if the tree is for multi-output or single_output regression
         self.flag_multi_output = True if self.targets.shape[1] > 1 else False
+
+        if use_logging:
+            logger.setLevel(logging.DEBUG)
+        else:
+            logger.info("User disbaled logging for the tree")
+            logger.setLevel(logging.CRITICAL)
 
         logger.info("Initialised tree object")
 
