@@ -28,7 +28,12 @@ class RegressionTree(BaseTree):
             root_path = root_path,
             use_logging = use_logging
         )
+        self.task = 'regression'
 
+    # Auxiliar method to postprocess classification outputs
+    def _postprocess_regression(self, y_raw):
+        return y_raw.squeeze()
+        
     # Auxiliary methods to conduct bin refinement 
     def _refine_step_bins(self, feature_data: np.ndarray, preds: np.ndarray, bin_idx: np.ndarray, edges: np.ndarray):
         """
@@ -234,6 +239,7 @@ class RegressionTree(BaseTree):
         
         final_ds = self.normalised_dataset[self.NODE_DS[nodes[-1]]]
         aux_preds = self.model.predict(final_ds)
+        aux_preds = self._postprocess_prediction(aux_preds)
         aux_preds = self._inverse_scale_outputs(aux_preds)
         pred_std = np.std(aux_preds)   # Some sort of uncertainty measure
 

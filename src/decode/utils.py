@@ -4,6 +4,7 @@
 
 import numpy as np
 import pickle
+from keras import Model as KerasModel
 
 
 # MSE - regression
@@ -133,3 +134,27 @@ def is_picklable(obj):
     except AttributeError:
         return True
     return True
+
+# Auxiliary function to conduct model predictions
+def model_preds(model, X: np.ndarray, model_type: str = 'reg'):
+    """
+        Conducting predictions with a given model in a unified way (because, for instance, keras methods do not output the same as sklearn models)
+        Args:
+            - model: the model to use for predictions
+            - X (np.ndarray): input data for predictions
+            - model_type (str): type of model ('reg' for regression, 'clf' for classification)
+    """
+    # NOTE: currently, the function is only adapted to sklearn and keras models
+    if model_type == 'reg':
+        return model.predict(X)
+    else:
+        if isinstance(model, KerasModel):
+            # 2 cases: (1) single output (sigmoid), or (2) one-hot encoded output (softmax)
+            preds = model.predict(X)
+            if preds.shape[1] == 1:
+                return (preds > 0.5).astype(int).flatten()
+            else:
+                return np.argmax(preds, axis = 1)
+        else:
+            return model.predict(X)
+

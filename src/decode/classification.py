@@ -28,6 +28,21 @@ class ClassificationTree(BaseTree):
             root_path = root_path,
             use_logging = use_logging
         )
+        self.task = 'classification'
+
+    # Auxiliar method to postprocess classification outputs
+    def _postprocess_classification(self, y_raw):
+        # Sigmoid output
+        if y_raw.ndim == 2 and y_raw.shape[1] == 1:
+            p = y_raw.squeeze()
+            return (p >= 0.5).astype(int)
+        # Softmax/one-hot output
+        elif y_raw.ndim == 2:
+            proba = y_raw
+            return np.argmax(proba, axis=1)
+        # Hard labels only
+        else:
+            return y_raw.astype(int)
 
     # Auxiliary methods to conduct bin refinement 
     def _refine_step_bins(self, feature_data: np.ndarray, preds: np.ndarray, bin_idx: np.ndarray, edges: np.ndarray):

@@ -182,6 +182,18 @@ class BaseTree(ABC):
             return inverse_y
         return y        
     
+    def _postprocess_prediction(self, y_raw):
+
+        if self.task == "classification":
+            return self._postprocess_classification(y_raw)
+
+        elif self.task == "regression":
+            return self._postprocess_regression(y_raw)
+
+        else:
+            raise ValueError("BaseTree.task not set")
+
+    
 
     ###############################################################
     ################### VARIABLE DISCRETIZATION ###################
@@ -238,7 +250,8 @@ class BaseTree(ABC):
 
                     # Make predictions with the model
                     inp_dataset = self.normalised_dataset[dataset_idx, :]
-                    preds = self.model.predict(inp_dataset)                    
+                    preds = self.model.predict(inp_dataset)       
+                    preds = self._postprocess_prediction(preds)             
                     
                     # Iterate to find possible refinment of bins
                     for _ in range(n_refine):
@@ -427,6 +440,7 @@ class BaseTree(ABC):
         ### 1. INITIAL NODE TRIAL
         original_idx = np.arange(len(self.dataset))
         original_preds = self.model.predict(self.normalised_dataset)
+        original_preds = self._postprocess_prediction(original_preds)            
         step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive)
         final_res = self.execute_trial(original_idx, original_preds, step_info, criterium = criterium)
         if final_res is None:
@@ -457,6 +471,8 @@ class BaseTree(ABC):
                 right_ds_idx = self.NODE_DS[prev_node_index][~left_mask]
                 left_preds = self.model.predict(self.normalised_dataset[left_ds_idx])
                 right_preds = self.model.predict(self.normalised_dataset[right_ds_idx])
+                left_preds = self._postprocess_prediction(left_preds)
+                right_preds = self._postprocess_prediction(right_preds)
 
                 ## 2.2. PROCESS LEFT NODE
                 if len(left_ds_idx) > 0:
