@@ -1,0 +1,801 @@
+"""
+    Sub-class for time series classification problems with sliding windows
+"""
+
+# xai_tree/regression.py
+import numpy as np
+from .base_tree import BaseTree
+from .utils import log_loss, gini
+from typing import Union
+from .plotting import plot_classification_tree
+import matplotlib.pyplot as plt
+from .logger import logger
+import os
+
+import numpy as np
+from pathlib import Path
+from .utils import *
+from abc import ABC, abstractmethod
+from typing import Union
+from .logger import logger
+from munch import Munch
+import os, yaml
+import pandas as pd
+from joblib import Parallel, delayed
+import logging 
+
+class SlidingClassificationTree:
+
+    def __init__(self, model, dataset: np.ndarray, targets: np.ndarray, target_rule_indexes: np.ndarray, scalerX = None, scalerY = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, root_path: str = None, use_logging: bool = True):
+        """
+            Args:
+                - model: model instance for the classifier/regressor
+                - scalerX: scaler for the inputs
+                - scalerY: scaler for the outputs (only relevant for regression problems)
+                - dataset (np.ndarray): input dataset with features - not-normalised
+                - targets (np.ndarray): output dataset with targets - not-normalised
+                - feature_names (list): list with all feature names for plotting purposes
+                - target_names (list): list with all target names for plotting purposes
+                - feature_types (list): list that defines numerical features - 'N' - and categorical features - 'C'. Categorical features will not be considered for normalisation
+                - seed (int): seed for random number generation
+                - root_path (str): specific path to store results. If not given, it stores in the current working directory, inly when required
+                - logging (bool): flag to enable or disable logging
+                - sliding_window_size (int): size of the sliding window to be used for time series classification
+        """
+        
+        self.model = model
+        self.scalerX = scalerX
+        self.scalerY = scalerY
+        self.dataset = dataset
+        self.targets = targets
+        self.feature_names = feature_names
+        self.target_names = target_names
+        self.feature_types = feature_types
+        self.seed = seed
+        self.root_path = root_path
+        self.target_rule_indexes = target_rule_indexes
+        self.task = 'classification'
+
+        np.random.seed(self.seed)
+
+        if self.model is None:
+            raise KeyError("Model instance has not been passed")
+        if self.dataset is None:
+            raise KeyError("No input dataset has been provided")
+        if self.targets is None:
+            raise KeyError("No output targets have been provided")
+        if self.target_names is None:
+            logger.warning("No target names have been provided. Replaced by an ordered list of integers")
+            self.target_names = [f'Target {i}' for i in range(len(np.unique(targets)))]
+        if self.feature_names is None:
+            logger.warning("No feature names have been provided. Replaced by an ordered list of integers")
+            self.feature_names = [f'Feature {i}' for i in range(dataset.shape[1])]
+        if self.feature_types is None:
+            logger.warning("No feature types have been provided. Considering all features as numerical (may not be aligned with model training...)")
+            self.feature_types = ['N' for _ in range(dataset.shape[1])]
+        
+        self.numerical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'N']
+
+        # Reshaping targets so that they have always 2 dimensions
+        if len(self.targets.shape) == 1:
+            self.targets = self.targets.reshape(-1, 1)
+
+        # Generating a normalised dataset
+        self.normalised_dataset = self._scale_inputs(self.dataset) # NOTE: if no scalerX is provided, self.normalised_dataset = self.dataset
+
+        # Resetting the tree
+        self._reset_tree()
+
+        # Defining storage settings
+        self._storage_settings()
+
+        # Internal flag that states if the tree is for multi-output or single_output regression
+        self.flag_multi_output = True if self.targets.shape[1] > 1 else False
+
+        if use_logging:
+            logger.setLevel(logging.DEBUG)
+        else:
+            logger.info("User disbaled logging for the tree")
+            logger.setLevel(logging.CRITICAL)
+
+        logger.info("Initialised tree object")
+
+
+
+
+    #########################################################
+    #################### STORAGE FOLDERS ####################
+    #########################################################
+    def _storage_settings(self):
+        """
+            Simple internal function just to define some basic storage folders
+        """
+
+        # Resolving the paths
+        if self.root_path is not None:
+            root = Path(self.root_path).expanduser()
+            # If relative, resolve against cwd
+            if not root.is_absolute():
+                self.root = (cwd / root).resolve()
+        else:
+            cwd = os.getcwd()  # current working directory
+            default_root = cwd
+            self.root = default_root
+        
+        # Base folders for storage
+        self.storage = Munch()
+        self.storage.folders = Munch(
+            figs = os.path.join(self.root, "figures"),
+            results = os.path.join(self.root, "results"),
+            data = os.path.join(self.root, "datasets"),
+            logs = os.path.join(self.root, "logs")
+        )
+
+        # Creating the logs folders
+        os.makedirs(os.path.join(self.root, self.storage.folders.logs), exist_ok = True)
+
+
+    #########################################################
+    ################## TREE INITIALISATION ##################
+    #########################################################
+    
+    def _reset_tree(self):
+        """
+            Initialising all possible parameters for the tree building process 
+        """
+        self.N_NODE_SAMPLES = []    # Number of samples covered in a node's rule
+        self.IMPURITY = []          # Gini score for each node's rule (classification) / MSE score for each node's rule (regression)
+        self.VALUE = []             # Value of the feature that is incorporated in the rule
+        self.FEATURE = []           # Index of the feature of the target rule for a node
+        self.LEFT = []              # Whether a particular node is a left node (1) or a right node (0)
+        self.DEPTH = []             # Depth of a specific node in the overall tree
+        self.LEAF = []              # Whether a specific node is a leaf node
+        self.PARENT = []            # Indicator of the parent for a specific node
+        self.NODE_DS = []           # Placeholder for the original dataset indexes to be used    
+        # Variables specific for classification
+        self.CLASS_DIST = []        # Class distribution of the resulting rule 
+        self.CLASS = []             # Class of the target rule for a node
+        # Variables specific for regression
+        self.AVG_VALUE = []         # Average output value for a specific node
+
+
+    #########################################################
+    ################### SCALING UTILITIES ###################
+    #########################################################
+    
+    def _scale_inputs(self, X: np.ndarray):
+        """
+            Given a specific input dataset, and if a scalerX is defined, will return the scaled inputs
+            Args:
+                - X (np.ndarray): dataset to be normalised
+            Returns:
+                - X_scaled/X (np.ndarray): normalised dataset/original dataset if no scaler exists
+        """
+        if hasattr(self, "scalerX") and self.scalerX is not None:
+            X_scaled = X.copy()
+            X_scaled[:, self.numerical_idx] = self.scalerX.transform(
+                X_scaled[:, self.numerical_idx]
+            )
+            return X_scaled
+        else:
+            return X
+    
+    def _inverse_scale_outputs(self, y: np.ndarray):
+        """
+            Given a specific set of predictions y, inverse scaling them to the original format (relevant for regression problems)
+            Args:
+                - y (np.ndarray): outputs from the model, scaled
+            Returns:
+                - inverse_y/ y (np.ndarray): either the inverse transformed y, or the original if no scaler is provided
+        """
+        if hasattr(self, "scalerY") and self.scalerY is not None:
+            if len(y.shape) == 1:
+                y = y.reshape(-1, 1)
+            inverse_y = self.scalerY.inverse_transform(y)
+            return inverse_y
+        return y        
+    
+    def _postprocess_prediction(self, y_raw):
+
+        if self.task == "classification":
+            return self._postprocess_classification(y_raw)
+
+        elif self.task == "regression":
+            return self._postprocess_regression(y_raw)
+
+        else:
+            raise ValueError("BaseTree.task not set")
+
+    def _postprocess_classification(self, y_raw):
+        # Sigmoid output
+        if y_raw.ndim == 2 and y_raw.shape[1] == 1:
+            p = y_raw.squeeze()
+            return (p >= 0.5).astype(int)
+        # Softmax/one-hot output
+        elif y_raw.ndim == 2:
+            proba = y_raw
+            return np.argmax(proba, axis=1)
+        # Hard labels only
+        else:
+            return y_raw.astype(int)
+
+    ###############################################################
+    ################### VARIABLE DISCRETIZATION ###################
+    ###############################################################
+
+    # Auxiliary methods to conduct bin refinement 
+    def _refine_step_bins(self, feature_data: np.ndarray, preds: np.ndarray, bin_idx: np.ndarray, edges: np.ndarray):
+        """
+            Function that will conduct bin refinement (when we want an adaptive discretization process)
+            Args:
+                - feature_data (np.ndarray): values for the current feature being assessed
+                - preds (np.ndarray): current predictions conducted by the model
+                - bin_idx (np.ndarray): array with info, for each predicted sample, on their current bin for the current discretization
+                - edges (np.ndarray): all current discretization values
+            Return:
+                - refine_bins (np.ndarray): array with the bin indexes to be refined
+        """
+        # NOTE: STILL IN DEVELOPMENT!
+        bin_vars = [np.var(preds[bin_idx == i], ddof=1) if np.sum(bin_idx == i) > 1 else np.nan for i in range(len(edges)-1)]
+        refine_bins = np.where(bin_vars > np.median(bin_vars) * 1.5)[0]
+
+        return refine_bins
+    
+    def _create_auto_steps(self, dataset_idx: np.ndarray, n_steps: Union[str, int] = None, adaptive: bool = False, refine_factor: int = 2, n_refine: int = 2):
+        """
+            Generates the steps automatically, leveraging the numpy.histogram function to create optimal bins for each feature. Additionally, it contemplates the possibility to create adaptive quantile-based steps. Depending on the method that is deployed in the Regressor/Classifier classes, the refinement will be conducted accordingly
+            Args:
+                - dataset_idx (np.ndarray): indices, relative to the original dataset, that should be taken into account to conduct the variable discretization
+                - n_steps (str): Whether to automatically create the steps for each feature or to use a fixed number of steps for the quantiles
+                - adaptive (bool): Whether to create adaptive quantile-based steps
+                - refine_factor (int): Number of new bins to create from a candidate split
+                - n_refine (int): number of possible refinement iterations
+            Returns:
+                - step_info (dict): Dictionary with the feature names as keys and their min, max and steps as values
+        """
+        step_info = {}
+        for idx, feature in zip(self.target_rule_indexes, np.array(self.feature_names)[self.target_rule_indexes]):
+            feature_data = self.dataset[dataset_idx, idx]
+            # In case we are dealing with a numerical feature
+            if self.feature_types[idx] == 'N':            
+                step_info[feature] = {
+                    'min': np.min(feature_data),
+                    'max': np.max(feature_data),
+                    'median': np.median(feature_data)
+                }
+                if not adaptive:
+                    # Creating an array with the steps
+                    if isinstance(n_steps, str) or n_steps is None:
+                        _, bin_edges = np.histogram(feature_data, bins = 'auto')
+                        step_info[feature]['steps'] = bin_edges[1:-1]   # First value is the minimum, last value is the maximum - they generate degenerate splits
+                    elif isinstance(n_steps, int):
+                        quantiles = np.linspace(0, 1, n_steps + 1)
+                        steps = np.unique(np.quantile(feature_data, quantiles))
+                        # Creating an array with n-steps between min and max
+                        step_info[feature]['steps'] = steps[1:-1]       # First value is the minimum, last value is the maximum - they generate degenerate splits
+                
+                else:   # We will create adaptive quantile-based steps
+                    
+                    # Creating an array with the initial steps
+                    if isinstance(n_steps, str) or n_steps is None:
+                        _, edges = np.histogram(feature_data, bins = 'auto')
+                        edges = edges[1:-1]
+                    elif isinstance(n_steps, int):
+                        quantiles = np.linspace(0, 1, n_steps + 1)
+                        edges = np.unique(np.quantile(feature_data, quantiles))
+                        edges = edges[1:-1]
+
+                    # Make predictions with the model
+                    inp_dataset = self.normalised_dataset[dataset_idx, :]
+                    preds = self.model.predict(inp_dataset)       
+                    preds = self._postprocess_prediction(preds)             
+                    
+                    # Iterate to find possible refinment of bins
+                    for _ in range(n_refine):
+                        bin_idx = np.digitize(feature_data, edges, right=True)
+                        # Getting the bins to refine based on the tree class
+                        refine_bins = self._refine_step_bins(feature_data, preds, bin_idx, edges)
+                        if len(refine_bins) == 0:
+                            break   # No more bins to refine
+                        new_edges = list(edges)
+                        for b in refine_bins:
+                            # re-split the bin locally
+                            mask = (feature_data > edges[b]) & (feature_data <= edges[b+1])
+                            if np.sum(mask) < 2:  # skip tiny bins
+                                continue
+                            sub_qs = np.linspace(0, 1, refine_factor + 1)
+                            sub_edges = np.quantile(feature_data[mask], sub_qs)[1:-1]
+                            new_edges.extend(sub_edges)
+                        
+                        edges = np.unique(np.sort(new_edges))
+                    
+                    step_info[feature]['steps'] = edges
+
+            # In case we are dealing with a categorical feature
+            elif self.feature_types[idx] == 'C':
+                unique_vals = np.unique(feature_data).astype(int)
+                step_info[feature] = {}
+                step_info[feature]['steps'] = (unique_vals[:-1] + unique_vals[1:]) / 2
+        
+        return step_info
+
+
+    ##################################################################
+    ################### SPLIT EVALUATION + SCORING ###################
+    ##################################################################
+
+    # Calculating impurity
+    def _impurity_calculation(self, preds: np.ndarray, criterium: str = 'default'):
+        """
+            Impurity calculation based on the criterium chosen
+            Args:
+                - preds (np.ndarray): predictions conducted by the model
+                - criterium (str): default, or 'gini', 'log_loss'
+            Returns:
+                - score (float): the target candidate score
+        """
+        # Auxiliary step for calculating the prediction distribution
+        preds_dist = np.bincount(preds, minlength=len(self.target_names))
+        if self.class_weights is not None:
+            probs = (list(self.class_weights.values())*preds_dist)/np.sum(list(self.class_weights.values())*preds_dist)
+        else:
+            probs = preds_dist/np.sum(preds_dist)
+        if criterium == 'default' or criterium == 'log_loss':
+            return log_loss(probs)
+        elif criterium == 'gini':
+            return gini(probs)
+
+    def _candidate_score(self, dataset_idx: np.ndarray, preds: np.ndarray, feature_idx: int, feature_values: np.ndarray, criterium: str = 'default'):
+        """
+            Auxiliary function that automatically calculates the candidate score for a particular split of the dataset
+            Args:
+                - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
+                - preds (np.ndarray): predictions for our current dataset
+                - feature_idx (int): feature index of the target rule
+                - feature_values (np.ndarray): all possible values for the target rule
+                - criterium (str): criterium used to compute the loss
+            Returns:
+                - scores (np.ndarray): score for all candidate splits of a particular feature
+            See https://scikit-learn.org/stable/modules/tree.html#tree-mathematical-formulation for more details
+        """
+        # Current dataset
+        current_ds = self.dataset[dataset_idx]
+
+        # Conduct all splits
+        n_samples = current_ds.shape[0]
+        feature_column = current_ds[:, feature_idx]
+        
+        # Left and right datasets
+        masks = feature_column[None, :] <= feature_values[:, None]
+        n_left_samples = masks.sum(axis = 1)
+        n_right_samples = n_samples - n_left_samples
+
+        # Filtering any mask that does not comply with the threshold for min_samples_split
+        valid_mask = (n_left_samples >= self.min_samples_split) & (n_right_samples >= self.min_samples_split)
+        if not np.any(valid_mask):
+            return np.full(len(feature_values), np.nan)
+        
+        # Impurity calculations
+        original_impurity = self._impurity_calculation(preds, criterium)
+        left_impurities = np.array([self._impurity_calculation(preds[mask], criterium) for mask in masks[valid_mask]])
+        right_impurities = np.array([self._impurity_calculation(preds[~mask], criterium) for mask in masks[valid_mask]])
+        
+        # Candidate scores
+        candidate_scores = original_impurity - ((n_left_samples[valid_mask]/n_samples)*left_impurities + (n_right_samples[valid_mask]/n_samples)*right_impurities)
+
+        # Global impurity decreases + checking their compliance with the min_impurity_decrease criterium
+        global_impurity_decreases = (n_samples/len(self.dataset))*candidate_scores
+        candidate_scores[global_impurity_decreases < self.min_impurity_decrease] = np.nan
+
+        # Returning the scores for all possible feature values
+        scores = np.full(len(feature_values), np.nan)
+        scores[valid_mask] = candidate_scores 
+
+        return scores 
+    
+
+    def execute_trial(self, dataset_idx: np.ndarray, preds: np.ndarray, step_info: dict, criterium: str = 'default'):
+        """
+            Executes a new trial for each feature and its steps, based on the providade dataset
+            Args:
+                - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
+                - preds (np.ndarray): predictions for the current dataset (self.model.predict(self.normalised_dataset[dataset_idx]))
+                - step_info (dict): dictionary with the feature steps information
+                - criterium (str): str that defines the choosing criterium - "default" by default 
+            Returns:
+                - score_list (list): list of tuples that contemplates (feature_idx, feature_value, candidate_score) for each individual step in each feature considered
+        """         
+        score_list = None 
+
+        for feature_idx, feature in zip(self.target_rule_indexes, np.array(self.feature_names)[self.target_rule_indexes]):
+            feature_values = np.array(step_info[feature]['steps'])
+            candidate_scores = self._candidate_score(dataset_idx = dataset_idx, preds = preds, feature_idx = feature_idx, feature_values = feature_values, criterium = criterium)
+            scores_aux = np.concatenate((np.repeat(feature_idx, len(feature_values))[:, None], feature_values[:, None], candidate_scores[:, None]), axis = 1)
+            score_list = np.concatenate((score_list, scores_aux), axis = 0) if score_list is not None else scores_aux
+        
+        # Remove rows with NaN values and check if we have more than 1 admissible split
+        score_list = score_list[~np.isnan(score_list).any(axis = 1)]
+        if len(score_list) == 0:
+            logger.warning(f"No admissible splits were found for node {len(self.FEATURE) + 1}")
+            return None
+        
+        # Sort by candidate score (last column)
+        sorted_list = score_list[score_list[:, -1].argsort()[::-1]]
+        return sorted_list[0]
+    
+
+    ###################################################################
+    ##################### TREE GROWTH/DEVELOPMENT #####################
+    ###################################################################  
+
+    def _initialise_root_node(self, final_res, original_preds: np.ndarray = None):
+        """
+            Initialising the root node information
+            Args:
+                - final_res (tuple): tuple that comprises the best candidate score, in the form of (feature_idx, feature_value, candidate_score)
+                - original_preds (np.ndarray): original predictions for the entire dataset
+        """
+        # Auxiliary variable - class distribution for the original targets
+        target_dist = np.unique(self.targets, return_counts = True)[1]
+
+        ## Appending the necessary information
+        self.N_NODE_SAMPLES.append(len(self.dataset))
+        self.IMPURITY.append(self._impurity_calculation(original_preds, 'gini'))
+        self.VALUE.append(final_res[1])
+        self.FEATURE.append(int(final_res[0]))
+        self.LEFT.append(0)                      
+        self.DEPTH.append(0)           
+        self.LEAF.append(0)            
+        self.PARENT.append(-1)
+        self.CLASS.append(np.argmax(target_dist))
+        self.CLASS_DIST.append(target_dist)
+        self.NODE_DS.append(np.arange(len(self.dataset)))  
+
+    def _expand_node(self, 
+                    prev_node_idx: int, 
+                    current_depth: int, 
+                    dataset_idx: np.ndarray, 
+                    preds: np.ndarray,
+                    n_steps: Union[str, int], 
+                    adaptive: bool, 
+                    criterium: str, 
+                    left: bool):
+        """
+            Creating a new node based on the previous
+            Args:  
+                - prev_node_idx (int): parent node index
+                - current_depth (int): current depth in the tree
+                - dataset_idx (np.ndarray): indexes, relative to the original dataset, of the current dataset being assessed
+                - preds (np.ndarray): predictions for the current dataset being evaluated
+                - n_steps (Union[str, int]): steps approach for discretization
+                - adaptive (bool): whether to implement adaptive discretization
+                - criterium (str): criterium for loss assessment in the tree
+                - left (bool): if we are in a left (True) or a right (False) node
+        """
+        logger.debug(f"Expanding node {prev_node_idx} (depth={self.DEPTH[prev_node_idx]}) → "
+             f"feature={self.feature_names[self.FEATURE[prev_node_idx]]}, threshold={self.VALUE[prev_node_idx]:.3f}")
+
+        # 0. Some initial base information regarding the node
+        self.LEFT.append(1 if left else 0)
+        self.PARENT.append(prev_node_idx)
+        self.DEPTH.append(current_depth)
+        self.NODE_DS.append(dataset_idx)
+
+        # 1. Initial information for the tree
+        node_imp = self._impurity_calculation(preds, 'gini')
+        preds_dist = np.bincount(preds, minlength = len(self.target_names))
+        self.N_NODE_SAMPLES.append(len(preds))
+        self.IMPURITY.append(node_imp)
+        self.CLASS.append(np.argmax(preds_dist))
+        self.CLASS_DIST.append(preds_dist)
+
+        # 1st verification - impurity threshold or max depth
+        if node_imp < self.imp_threshold or current_depth == self.max_depth:
+            self.LEAF.append(1)
+            self.VALUE.append(None)
+            self.FEATURE.append(None)
+            if current_depth == self.max_depth:
+                logger.debug(f"Max depth reached at node {len(self.FEATURE)-1} -> leaf node")
+            if node_imp < self.imp_threshold:
+                logger.debug(f"Stopping split: impurity {node_imp:.4f} < threshold {self.imp_threshold}")
+        else:
+            # Conduct the optimisation process for the rule
+            step_info = self._create_auto_steps(dataset_idx, n_steps = n_steps, adaptive = adaptive)
+            final_res = self.execute_trial(dataset_idx, preds, step_info, criterium = criterium)
+            # In case no target rule was found
+            if final_res is None:
+                logger.warning(f"No acceptable candidate split was found for node {prev_node_idx}. Marking it as a leaf node")
+                self.LEAF.append(1)
+                self.VALUE.append(None)
+                self.FEATURE.append(None)            
+            else:
+                logger.debug(f"Candidate split found for node {prev_node_idx}: Rule is {int(final_res[0])} <= {final_res[1]}")
+                self.LEAF.append(0)
+                self.VALUE.append(final_res[1])
+                self.FEATURE.append(int(final_res[0]))
+        logger.debug(f"Details: number of samples = {self.N_NODE_SAMPLES[-1]}, impurity = {self.IMPURITY[-1]}, output class = {self.CLASS[-1]}, class distribution = {self.CLASS_DIST[-1]}")
+
+
+    def _compute_class_weights(self, class_weights: Union[str, dict] = None):
+        """
+            Internal function, only actually relevant for classification problems, that computes the class weights based on the dataset
+            Args:
+                - class_weights (str/dict): only relevant for classification problems. If 'str' and 'balanced', it will automatically compute the class weights based on the dataset. If 'dict', it will use the provided dictionary to weight each class accordingly           
+        """
+        if isinstance(class_weights, str) and class_weights == 'balanced':
+            # Computing the class weights based on the dataset + pre-computed formula (based on sklearn's one)
+            n_samples, n_classes = len(self.targets), len(np.unique(self.targets))
+            class_counts = np.bincount(self.targets.flatten().astype(int))
+            self.class_weights = {i: n_samples/(n_classes*class_counts[i]) for i in range(n_classes)}
+        elif isinstance(class_weights, dict):
+            self.class_weights = class_weights
+        else:
+            self.class_weights = None
+
+
+    def build_tree(self, 
+                   max_depth: int = 5,
+                   imp_threshold: float = 0.0,
+                   n_steps: Union[str, int] = 'auto',
+                   adaptive: bool = False,
+                   min_samples_split: int = 2,
+                   min_impurity_decrease: float = 0.0,
+                   criterium: str = 'default',
+                   class_weights: Union[None, str, dict] = None):
+        """
+            Generates the decision tree based on the provided dataset and model
+            Args:
+                - max_depth (int): maximum depth of the tree
+                - impurity_threshold (float): impurity threshold to stop the tree growth
+                - n_steps (str/int): numerical variable discretization approach. If 'str' and 'auto', it will automatically create the steps for each numerical feature. If 'int', it will create that number of quantile-based steps for each numerical feature
+                - adaptive (bool): whether to create adaptive quantile-based steps for numerical features
+                - min_samples_split (int): minimum samples required to attempt a split
+                - min_impurity_decrease (float): minimum impurity decrease required to accept a split
+                - criterium (str): the criterium to be used to evaluate candidate nodes of the tree
+                - class_weights (str/dict/None): only relevant for classification problems. If 'str' and 'balanced', it will automatically compute the class weights based on the dataset. If 'dict', it will use the provided dictionary to weight each class accordingly
+        """
+
+        logger.info(f"Starting the tree generation process")
+        logger.debug(f"Parameters: max_depth={max_depth}, imp_threshold={imp_threshold}, n_steps={n_steps}, adaptive = {adaptive}, min_samples_split={min_samples_split}, min_impurity_decrease={min_impurity_decrease}, criterium={criterium}")
+
+        # Instantiating by storing the stopping criteria
+        self.min_samples_split = min_samples_split
+        self.min_impurity_decrease = min_impurity_decrease
+        self.max_depth = max_depth
+        self.imp_threshold = imp_threshold
+
+        # Handling class weights for classification problems
+        self._compute_class_weights(class_weights)
+
+        # Clearing, for safety, all tree parameters
+        self._reset_tree()
+
+        ### 1. INITIAL NODE TRIAL
+        original_idx = np.arange(len(self.dataset))
+        ###################
+        original_dataset = np.zeros_like(self.dataset)
+        original_dataset[:, self.target_rule_indexes] = self.normalised_dataset[original_idx][:, self.target_rule_indexes]
+        original_preds = self.model.predict(original_dataset)
+        # original_preds = self.model.predict(self.normalised_dataset)
+        original_preds = self._postprocess_prediction(original_preds)   
+        # #########################         
+        step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive)
+        final_res = self.execute_trial(original_idx, original_preds, step_info, criterium = criterium)
+        if final_res is None:
+            raise RuntimeError("No valid split found for root node. Try reducing constraints.")    
+        # Storing the root info
+        self._initialise_root_node(final_res, original_preds)
+        logger.info(f"Root node created. Rule is {self.feature_names[self.FEATURE[0]]} <= {self.VALUE[0]}")
+        logger.debug(f"Root node impurity = {self.IMPURITY[0]}")
+
+
+        # COMPUTING MEDIANS FOR AN EXPERIMENT
+        medians = {}
+        for i in range(len(np.unique(self.targets))):
+            class_samples = self.normalised_dataset[self.targets.squeeze() == i]
+            medians[i] = np.median(class_samples, axis = 0)
+
+        ### 2. TREE GROWTH LOOP
+
+        for i in range(1, max_depth + 1):
+
+            # Gathering the previous depth indices - parents
+            prev_depth_indices = [index for index, value in enumerate(self.DEPTH) if value == (i - 1)]
+
+            # Iterating for all possible parent nodes
+            for prev_node_index in prev_depth_indices:
+
+                # Skip if already leaf
+                if self.LEAF[prev_node_index] == 1:
+                    continue
+
+                ## 2.1. SELECT DATASET IDXS FOR THE NEXT NODE
+                current_ds = self.dataset[self.NODE_DS[prev_node_index]]    
+                left_mask = current_ds[:, self.FEATURE[prev_node_index]] <= self.VALUE[prev_node_index]
+                left_ds_idx = self.NODE_DS[prev_node_index][left_mask]
+                right_ds_idx = self.NODE_DS[prev_node_index][~left_mask]
+                ##################################################
+                # Option with dataset set as class medians
+                left_targets = self.targets[left_ds_idx]
+                right_targets = self.targets[right_ds_idx]
+                left_ds, right_ds = np.zeros((len(left_ds_idx), current_ds.shape[1])), np.zeros((len(right_ds_idx), current_ds.shape[1]))
+                # Medians per sample class
+                for target_class in np.unique(left_targets):
+                    class_mask = left_targets.squeeze() == target_class
+                    left_ds[class_mask] = medians[target_class]
+                for target_class in np.unique(right_targets):
+                    class_mask = right_targets.squeeze() == target_class
+                    right_ds[class_mask] = medians[target_class]    
+                # Values of the target indexes as it is
+                left_ds[:, self.target_rule_indexes] = self.normalised_dataset[left_ds_idx][:, self.target_rule_indexes]
+                right_ds[:, self.target_rule_indexes] = self.normalised_dataset[right_ds_idx][:, self.target_rule_indexes]
+                left_preds = self.model.predict(left_ds)
+                right_preds = self.model.predict(right_ds)
+                left_preds = self._postprocess_prediction(left_preds)
+                right_preds = self._postprocess_prediction(right_preds)
+                # ##################################################
+                # # Option with dataset put to 0s except target rules
+                # left_aux, right_aux = np.zeros((len(left_ds_idx), current_ds.shape[1])), np.zeros((len(right_ds_idx), current_ds.shape[1]))
+                # left_aux[:, self.target_rule_indexes] = self.normalised_dataset[left_ds_idx][:, self.target_rule_indexes]
+                # right_aux[:, self.target_rule_indexes] = self.normalised_dataset[right_ds_idx][:, self.target_rule_indexes]
+                # left_preds = self.model.predict(left_aux)
+                # right_preds = self.model.predict(right_aux)
+                # left_preds = self._postprocess_prediction(left_preds)
+                # right_preds = self._postprocess_prediction(right_preds)
+                # ##################################################
+                ## Original Option
+                # left_preds = self.model.predict(self.normalised_dataset[left_ds_idx])
+                # right_preds = self.model.predict(self.normalised_dataset[right_ds_idx])
+                # left_preds = self._postprocess_prediction(left_preds)
+                # right_preds = self._postprocess_prediction(right_preds)
+                #########################################
+
+                ## 2.2. PROCESS LEFT NODE
+                if len(left_ds_idx) > 0:
+                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = left_ds_idx, preds = left_preds, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = True)
+
+                ## 2.3. PROCESS RIGHT NODE
+                if len(right_ds_idx) > 0:
+                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = right_ds_idx, preds = right_preds, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = False)
+
+        logger.info(f"Tree building process completed: total nodes = {len(self.N_NODE_SAMPLES)}, leaf nodes = {np.sum(self.LEAF)}")
+
+    ###################################################################
+    ###################### CONDUCTING PREDICTIONS #####################
+    ###################################################################  
+
+    def _return_leaf_output(self, node_idx: int):
+        """
+            Returns the output class for the current prediction (current node)
+            Args:
+                - node_idx (int): current index
+        """
+        return self.CLASS[node_idx]
+
+    def make_predictions(self, samples: np.ndarray):
+        """
+            Make predictions for one or multiple samples based on the decision tree rules defined by the parameters.
+            Args:
+                - samples (np.ndarray): One or multiple samples to predict (must be in the shape of (n_samples, n_features))
+            Returns:
+                - predictions (np.ndarray): Array with the predictions for each sample
+                - prediction_paths (list): list of lists, where each sublist contains the nodes traversed for each sample
+
+        """
+        # 1. Initial check to see if we have just one sample or multiple samples
+        if samples.ndim == 1:
+            samples = samples.reshape(1, -1)
+
+        # 2. Now, iterate for each sample
+        predictions, prediction_paths = [], []
+        for sample in samples:
+
+            current_node = 0 # Start in the root node
+            pred_path = [0]  # Keep track of the path taken
+
+            while True:   # This allows us to iterate until we reach a leaf node
+                
+                # In case we are in the leaf node, we'll just return the prediction (most likely for now)
+                if (self.LEAF[current_node] == 1 or self.FEATURE[current_node] is None or self.VALUE[current_node] is None):
+                    pred = self._return_leaf_output(node_idx = current_node)
+                    predictions.append(pred)
+                    prediction_paths.append(pred_path)
+                    break
+
+                # Otherwise...
+                condition = (sample[self.FEATURE[current_node]] <= self.VALUE[current_node])
+                if condition:
+                    # Iterate to find the left child node
+                    for index, parent in enumerate(self.PARENT):
+                        if parent == current_node and self.LEFT[index] == 1:  # it only happens if the parent of the next node is the current node and its LEFT array says it is indeed a left child (that node)
+                            current_node = index
+                            pred_path.append(current_node)
+                            break
+                        else:
+                            continue
+                else:   # If we have a right node...
+                    # Iterate to find the right child node
+                    for index, parent in enumerate(self.PARENT):
+                        if parent == current_node and self.LEFT[index] == 0:  # it only happens if the parent of the next node is the current node and its RIGHT array says it is indeed a right child (that node)
+                            current_node = index
+                            pred_path.append(current_node)
+                            break
+                        else:
+                            continue
+
+        return np.array(predictions), prediction_paths
+
+ 
+    ###################################################################
+    ######################## FEATURE IMPORTANCE #######################
+    ################################################################### 
+
+    def compute_feature_importance(self):
+        """
+            Function that will compute feature importance for each individual feature in the tree
+            Returns:
+                - norm_feat_importance (np.ndarrray): a normalised feature importance ranking (sums up to 1) based on the criterium used (usually mse) approach for each individual input feature in the dataset
+        """
+        n_nodes = len(self.FEATURE)
+        # Creating an empty array of feature importances for all variables
+        feat_importance = np.zeros(len(self.feature_names)) 
+        
+        for node in range(n_nodes):
+            
+            # Only applicable to non-leaf nodes
+            if self.FEATURE[node] is not None:
+                # Retrieve child indices for the node
+                child_indices = [j for j, val in enumerate(self.PARENT) if val == node]
+                for idx in child_indices:
+                    if self.LEFT[idx] == 0:
+                        right_child = idx 
+                    elif self.LEFT[idx] == 1:
+                        left_child = idx
+            
+                # Gathering the parent and child impurities
+                parent_imp = self.IMPURITY[node]
+                left_child_imp = self.IMPURITY[left_child] if left_child is not None else 0
+                right_child_imp = self.IMPURITY[right_child] if right_child is not None else 0
+                # Other important variables - numer of left, right and total samples 
+                N_t = self.N_NODE_SAMPLES[node]
+                N_l = self.N_NODE_SAMPLES[left_child]
+                N_r = self.N_NODE_SAMPLES[right_child]
+                p_l = N_l/N_t
+                p_r= N_r/N_t
+                # Getting the importante "increment"
+                imp_increment = N_t*(parent_imp - p_l*left_child_imp - p_r*right_child_imp)
+                # Adding it to the adequate variable
+                feat_importance[self.FEATURE[node]] += imp_increment
+
+        # Getting the denominator for the equation
+        # Retrieve all non-leaf nodes
+        non_leaf_idx = [idx for idx, val in enumerate(self.LEAF) if val == 0] 
+        denominator = 0
+        for idx in non_leaf_idx:
+            denominator += self.N_NODE_SAMPLES[idx]*self.IMPURITY[idx]
+            
+        # Normalising so that importances sum up to 1
+        feat_importance = feat_importance/denominator
+        norm_feat_importance = feat_importance/np.sum(feat_importance)
+
+        return norm_feat_importance    
+
+
+    #######################################################################
+    ######################## EXTRACT PRED PATH TEXT #######################
+    #######################################################################
+
+    @abstractmethod
+    def extract_prediction_path(self, sample: np.ndarray):
+        """
+            Function that will extract the prediction path for each sample in the test set
+            Args:
+                - sample (np.array): sample to be analysed
+            Returns:
+                - text (str): textual explanation of the prediction path for the sample
+
+            Code inspiration:"
+            "https://scikit-learn.org/stable/auto_examples/tree/plot_unveil_tree_structure.html""
+        """        
+        pass
+        
