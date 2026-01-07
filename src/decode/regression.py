@@ -14,7 +14,21 @@ import os
 
 class RegressionTree(BaseTree):
 
-    def __init__(self, model, scalerX = None, scalerY = None, dataset: np.ndarray = None, targets: np.ndarray = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, root_path: str = None, use_logging: bool = True):
+    def __init__(self, 
+                model, 
+                scalerX = None, 
+                scalerY = None, 
+                dataset: np.ndarray = None, 
+                targets: np.ndarray = None, 
+                feature_names: list = None, 
+                target_names: list = None, 
+                feature_types: list = None, 
+                use_synth_ds: bool = False,
+                synth_ds_info: dict = None,
+                seed: int = 42, 
+                root_path: str = None, 
+                use_logging: bool = True):
+        
         super().__init__(
             model = model,
             scalerX = scalerX,
@@ -24,6 +38,8 @@ class RegressionTree(BaseTree):
             feature_names = feature_names,
             target_names = target_names,
             feature_types = feature_types,
+            use_synth_ds = use_synth_ds,
+            synth_ds_info = synth_ds_info,
             seed = seed,
             root_path = root_path,
             use_logging = use_logging
@@ -237,7 +253,7 @@ class RegressionTree(BaseTree):
         left_right = np.array(self.LEFT).squeeze()[nodes[1:]] 
         left_right = ['left' if val == 1 else 'right' for val in left_right]
         
-        final_ds = self.normalised_dataset[self.NODE_DS[nodes[-1]]]
+        final_ds = self.decode_normalised_dataset[self.NODE_DS[nodes[-1]]]
         aux_preds = self.model.predict(final_ds)
         aux_preds = self._postprocess_prediction(aux_preds)
         aux_preds = self._inverse_scale_outputs(aux_preds)

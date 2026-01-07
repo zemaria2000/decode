@@ -14,7 +14,20 @@ import os
 
 class ClassificationTree(BaseTree):
 
-    def __init__(self, model, scalerX = None, scalerY = None, dataset: np.ndarray = None, targets: np.ndarray = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, root_path: str = None, use_logging: bool = True):
+    def __init__(self, model, 
+                 scalerX = None, 
+                 scalerY = None, 
+                 dataset: np.ndarray = None, 
+                 targets: np.ndarray = None, 
+                 feature_names: list = None, 
+                 target_names: list = None, 
+                 feature_types: list = None, 
+                 use_synth_ds: bool = False,
+                 synth_ds_info: dict = None,
+                 seed: int = 42, 
+                 root_path: str = None, 
+                 use_logging: bool = True):
+        
         super().__init__(
             model = model,
             scalerX = scalerX,
@@ -24,6 +37,8 @@ class ClassificationTree(BaseTree):
             feature_names = feature_names,
             target_names = target_names,
             feature_types = feature_types,
+            use_synth_ds = use_synth_ds,
+            synth_ds_info = synth_ds_info,
             seed = seed,
             root_path = root_path,
             use_logging = use_logging
@@ -73,7 +88,7 @@ class ClassificationTree(BaseTree):
                 - score (float): the target candidate score
         """
         # Auxiliary step for calculating the prediction distribution
-        preds_dist = np.bincount(preds, minlength=len(self.target_names))
+        preds_dist = np.bincount(preds, minlength = len(self.target_names))
         if self.class_weights is not None:
             probs = (list(self.class_weights.values())*preds_dist)/np.sum(list(self.class_weights.values())*preds_dist)
         else:
@@ -92,10 +107,10 @@ class ClassificationTree(BaseTree):
                 - original_preds (np.ndarray): original predictions for the entire dataset
         """
         # Auxiliary variable - class distribution for the original targets
-        target_dist = np.unique(self.targets, return_counts = True)[1]
+        target_dist = np.unique(self.decode_targets, return_counts = True)[1]
 
         ## Appending the necessary information
-        self.N_NODE_SAMPLES.append(len(self.dataset))
+        self.N_NODE_SAMPLES.append(len(self.decode_dataset))
         self.IMPURITY.append(self._impurity_calculation(original_preds, 'gini'))
         self.VALUE.append(final_res[1])
         self.FEATURE.append(int(final_res[0]))
@@ -105,7 +120,7 @@ class ClassificationTree(BaseTree):
         self.PARENT.append(-1)
         self.CLASS.append(np.argmax(target_dist))
         self.CLASS_DIST.append(target_dist)
-        self.NODE_DS.append(np.arange(len(self.dataset)))    
+        self.NODE_DS.append(np.arange(len(self.decode_dataset)))    
 
 
     def _expand_node(self, 
