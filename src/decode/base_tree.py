@@ -13,7 +13,7 @@ import os, yaml
 import pandas as pd
 from joblib import Parallel, delayed
 import logging 
-from scipy.stats.qmc import Sobol, LatinHypercube
+from scipy.stats.qmc import Sobol, LatinHypercube, scale
 
 class BaseTree(ABC):
 
@@ -261,19 +261,6 @@ class BaseTree(ABC):
         """
         # NOTE: only works, for now, for datasets which contain either all numerical variables or a mix of numerical and categorical variables
         
-        # Auxiliary function to find the min and max values for each continuous feature
-        def _auxiliary_scaling(x_scaled, samples):
-            """
-                Auxiliary function that will scale the sampler samples (from [0, 1]) to the original SCALED feature space. This way, when conducting the inverse transform, we will be aligned with the original feature distributions
-                Args:
-                    - x_scaled (np.ndarray): scaled original dataset
-                    - samples (np.ndarray): samples generated between [0, 1]
-            """
-            min_vals = x_scaled[:, self.numerical_idx].min(axis = 0)
-            max_vals = x_scaled[:, self.numerical_idx].max(axis = 0)
-            cont_scaled_samples = min_vals + samples[:, self.numerical_idx] * (max_vals - min_vals)
-            return cont_scaled_samples
-
         if strategy is None:
             logging.warning("No strategy for synthetic dataset generation has been provided. Using only the original dataset'")
             self.decode_dataset = self.dataset
@@ -286,23 +273,23 @@ class BaseTree(ABC):
             if n_samples == 'auto':
                 n_samples = self.dataset.shape[0] * 10
             n_dims = self.dataset.shape[1]
-    
+            rng = np.random.default_rng(self.seed)
+
             if sampler not in ['sobol', 'lhs', 'random']:
                 logging.warning(f"Sampler {sampler} not recognised. Defaulting to 'random uniform'")
                 sampler = 'random'
             if sampler == 'sobol':
-                samples = Sobol(d = n_dims, scramble = sampler_kwargs.get('scramble', True), optimization = sampler_kwargs.get('optimization', 'random-cd')).random(n = n_samples)
+                samples = Sobol(d = n_dims, scramble = sampler_kwargs.get('scramble', True), optimization = sampler_kwargs.get('optimization', 'random-cd'), rng = rng).random(n = n_samples)
             elif sampler == 'lhs':
-                samples = LatinHypercube(d = n_dims, scramble = sampler_kwargs.get('scramble', True), optimization = sampler_kwargs.get('optimization', 'random-cd')).random(n = n_samples)
+                samples = LatinHypercube(d = n_dims, scramble = sampler_kwargs.get('scramble', True), optimization = sampler_kwargs.get('optimization', 'random-cd'), rng = rng).random(n = n_samples)
             elif sampler == 'random':
-                samples = np.random.uniform(low = 0.0, high = 1.0, size = (n_samples, n_dims))
+                samples = rng.uniform(low = 0.0, high = 1.0, size = (n_samples, n_dims))
             # NOTE: for the optimization process of the samples, although lloyd seems to better evenly space the points, it takes much more time to do so
 
             ## 2. Normalising the original dataset 
 
-            # 2.1. Handling continuous features 
-            x_scaled = self._scale_inputs(self.dataset)
-            cont_scaled_samples = _auxiliary_scaling(x_scaled, samples)
+            # # 2.1. Handling continuous features 
+            cont_samples = scale(samples[:, self.numerical_idx], l_bounds = np.min(self.dataset[:, self.numerical_idx], axis = 0), u_bounds = np.max(self.dataset[:, self.numerical_idx], axis = 0))
 
             # 2.2 Handling categorical features
             cat_samples = np.zeros_like(samples[:, self.categorical_idx])
@@ -313,12 +300,10 @@ class BaseTree(ABC):
                 cat_samples[:, i] = cat_values       
 
             # 2.3. Joining them together
-            synthetic_dataset = np.zeros_like(samples)
-            synthetic_dataset[:, self.numerical_idx] = cont_scaled_samples
-            synthetic_dataset[:, self.categorical_idx] = cat_samples
+            x_synthetic = np.zeros_like(samples)
+            x_synthetic[:, self.numerical_idx] = cont_samples
+            x_synthetic[:, self.categorical_idx] = cat_samples
 
-            # 2.4. Inverse transforming the continuous features so that we have the dataset under its original distribution
-            x_synthetic = self._inverse_scale_inputs(synthetic_dataset)
 
             ## 3. Generating the synthetic labels
             y_synthetic = self.model.predict(self._scale_inputs(x_synthetic))
