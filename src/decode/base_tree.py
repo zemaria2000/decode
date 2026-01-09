@@ -289,7 +289,7 @@ class BaseTree(ABC):
             ## 2. Normalising the original dataset 
 
             # # 2.1. Handling continuous features 
-            cont_samples = scale(samples[:, self.numerical_idx], l_bounds = np.min(self.dataset[:, self.numerical_idx], axis = 0), u_bounds = np.max(self.dataset[:, self.numerical_idx], axis = 0))
+            cont_samples = scale(samples[:, self.numerical_idx], l_bounds = np.min(self.dataset[:, self.numerical_idx], axis = 0), u_bounds = np.max(self.dataset[:, self.numerical_idx], axis = 0) + 1e-8)
 
             # 2.2 Handling categorical features
             cat_samples = np.zeros_like(samples[:, self.categorical_idx])
