@@ -14,7 +14,20 @@ import os
 
 class ClassificationTree(BaseTree):
 
-    def __init__(self, model, scalerX = None, scalerY = None, dataset: np.ndarray = None, targets: np.ndarray = None, feature_names: list = None, target_names: list = None, feature_types: list = None, seed: int = 42, root_path: str = None, use_logging: bool = True):
+    def __init__(self, model, 
+                 scalerX = None, 
+                 scalerY = None, 
+                 dataset: np.ndarray = None, 
+                 targets: np.ndarray = None, 
+                 feature_names: list = None, 
+                 target_names: list = None, 
+                 feature_types: list = None, 
+                 use_synth_ds: bool = False,
+                 synth_ds_info: dict = None,
+                 seed: int = 42, 
+                 root_path: str = None, 
+                 use_logging: bool = True):
+        
         super().__init__(
             model = model,
             scalerX = scalerX,
@@ -24,6 +37,8 @@ class ClassificationTree(BaseTree):
             feature_names = feature_names,
             target_names = target_names,
             feature_types = feature_types,
+            use_synth_ds = use_synth_ds,
+            synth_ds_info = synth_ds_info,
             seed = seed,
             root_path = root_path,
             use_logging = use_logging
@@ -73,7 +88,7 @@ class ClassificationTree(BaseTree):
                 - score (float): the target candidate score
         """
         # Auxiliary step for calculating the prediction distribution
-        preds_dist = np.bincount(preds, minlength=len(self.target_names))
+        preds_dist = np.bincount(preds, minlength = len(self.target_names))
         if self.class_weights is not None:
             probs = (list(self.class_weights.values())*preds_dist)/np.sum(list(self.class_weights.values())*preds_dist)
         else:
@@ -92,10 +107,10 @@ class ClassificationTree(BaseTree):
                 - original_preds (np.ndarray): original predictions for the entire dataset
         """
         # Auxiliary variable - class distribution for the original targets
-        target_dist = np.unique(self.targets, return_counts = True)[1]
+        target_dist = np.unique(self.decode_targets, return_counts = True)[1]
 
         ## Appending the necessary information
-        self.N_NODE_SAMPLES.append(len(self.dataset))
+        self.N_NODE_SAMPLES.append(len(self.decode_dataset))
         self.IMPURITY.append(self._impurity_calculation(original_preds, 'gini'))
         self.VALUE.append(final_res[1])
         self.FEATURE.append(int(final_res[0]))
@@ -105,7 +120,7 @@ class ClassificationTree(BaseTree):
         self.PARENT.append(-1)
         self.CLASS.append(np.argmax(target_dist))
         self.CLASS_DIST.append(target_dist)
-        self.NODE_DS.append(np.arange(len(self.dataset)))    
+        self.NODE_DS.append(np.arange(len(self.decode_dataset)))    
 
 
     def _expand_node(self, 
@@ -251,4 +266,79 @@ class ClassificationTree(BaseTree):
             text += f"\033[1mThe final prediction is {final_pred_str}, with a certainty of {np.round(100*certainty, 2)}%.\033[0m\n"
 
         return text
+
+
+    ######################################################
+    #### CURRENTLY IN DEVELOPMENT!!!!! ###################
+    ######################################################
+
+    def extract_base_paths(self):
+        """
+            Function that will extract all base paths from the classification tree
+        """
+        leaf_indexes = np.where(np.array(self.LEAF) == 1)[0]
+        all_paths = []
+        for leaf_idx in leaf_indexes:
+            parent_node_idx = None
+            new_path = []
+            new_path.append(leaf_idx)
+            current_idx = leaf_idx
+            while parent_node_idx != 0:
+                parent_node_idx = self.PARENT[current_idx]
+                new_path.append(parent_node_idx)
+                current_idx = parent_node_idx
+            # new_path.append(0)
+            all_paths.append(sorted(new_path))
+
+        return all_paths
     
+
+    def extract_domains(self, all_paths):
+        """
+            Function in development still
+        """
+        # paths = np.array(paths)
+
+        LEAF = np.array(self.LEAF)
+        FEATURE = np.array(self.FEATURE)
+        VALUE = np.array(self.VALUE)
+        LEFT = np.array(self.LEFT)
+
+        start_domain = np.concatenate((np.min(self.decode_dataset, axis = 0).reshape(1, -1), np.max(self.decode_dataset, axis = 0).reshape(1, -1)), axis = 0).T        
+        all_rule_info = {}
+
+        for i, path in enumerate(all_paths):
+        
+            # STEP 1 - Rule domain extraction
+            path = np.array(path)
+            specific_domain = start_domain.copy()
+            for node, next_node in zip(path[:-1], path[1:]):
+                if LEFT[next_node] == 1 and LEAF[node] == 0:
+                    specific_domain[FEATURE[node]][1] = VALUE[node]
+                elif LEFT[next_node] == 0 and LEAF[node] == 0:
+                    specific_domain[FEATURE[node]][0] = VALUE[node]
+                else:
+                    pass
+            
+            # STEP 2 - Identifying all the variables that were used in the path, and only sticking with those
+            # NOTE: by subtracting the original domain with the filtered one, any row where one of the values is unchanged will yield a 0 in that position
+            aux_subtract = start_domain - specific_domain
+            used_variables_domain = specific_domain[~np.all(aux_subtract == 0, axis = 1)]
+            used_variables = np.unique(np.delete(FEATURE[path], np.where(FEATURE[path] == None))).astype(int)
+            info = {}
+            info['domain'] = {}
+            info['limits'] = {}
+            for j, feat in enumerate(used_variables):
+                info['domain'][self.feature_names[feat]] = np.round(used_variables_domain[j], 3)
+                info['limits'][self.feature_names[feat]] = np.array([np.round(np.min(self.decode_dataset[:, feat]), 3), np.round(np.max(self.decode_dataset[:, feat]), 3)])
+
+            # STEP 3 - Extracting rule coverage information + output probability
+            class_dist = self.CLASS_DIST[path[-1]]
+            rule_samples, total_samples = np.sum(class_dist), self.decode_dataset.shape[0]
+            info['coverage'] = np.round(rule_samples/total_samples, 3)
+            info['output_probability'] = np.round(class_dist[np.argmax(class_dist)]/rule_samples, 3)
+            info['target_class'] = self.target_names[self.CLASS[path[-1]]]
+            
+            all_rule_info[f'Rule {i}'] = info
+        
+        return all_rule_info
