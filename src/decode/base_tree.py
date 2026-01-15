@@ -5,6 +5,7 @@
 import numpy as np
 from pathlib import Path
 from .utils import *
+from .tools import *
 from abc import ABC, abstractmethod
 from typing import Union
 from .logger import logger
@@ -14,6 +15,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 import logging 
 from scipy.stats.qmc import Sobol, LatinHypercube, scale
+from sklearn.model_selection import train_test_split 
 
 class BaseTree(ABC):
 
@@ -95,10 +97,7 @@ class BaseTree(ABC):
             n_samples = synth_ds_info.get('n_samples', 'auto')
             strategy = synth_ds_info.get('strategy', 'synth')
             sampler_kwargs = synth_ds_info.get('sampler_kwargs', {})
-            self._generate_synthetic_dataset(sampler = sampler,
-                                             n_samples = n_samples,
-                                             strategy = strategy,
-                                             **sampler_kwargs)
+            self._generate_synthetic_dataset(sampler = sampler, n_samples = n_samples, strategy = strategy, **sampler_kwargs)
 
         # Resetting the tree
         self._reset_tree()
@@ -112,7 +111,7 @@ class BaseTree(ABC):
         if use_logging:
             logger.setLevel(logging.DEBUG)
         else:
-            logger.info("User disbaled logging for the tree")
+            logger.info("User disabled logging for the tree")
             logger.setLevel(logging.CRITICAL)
 
         logger.info("Initialised tree object")
@@ -245,81 +244,39 @@ class BaseTree(ABC):
     ################# SYNTHETIC DATASET GENERATION ################
     ###############################################################
 
-    def _generate_synthetic_dataset(self, sampler: str = None, 
-                                    n_samples: Union[str, int] = 'auto',
-                                    strategy: str = None,
-                                    **sampler_kwargs):
-        """
-            Auxiliary function to generate a synthetic dataset, based on a particular sampler, that covers the entire feature space adequately
-            Args:
-                - smapler (str): sampler to be used. Valid samplers are 'sobol', 'lhs', or 'random'
-                - n_samples (Union[str, int]): number of samples to be generated. If 'auto', it will generate 10x the original dataset size, and if int, it will generate n_samples samples
-                - strategy (str): strategy to be used to build the overall tree (provided as a base argument for the tree building process). Valid strategies are 'synth' and 'both'
-            Returns:
-                - x_synthetic (np.ndarray): synthetic dataset generated
-                - y_synthetic (np.ndarray): synthetic labels generated
-        """
-        # NOTE: only works, for now, for datasets which contain either all numerical variables or a mix of numerical and categorical variables
-        
-        if strategy is None:
-            logging.warning("No strategy for synthetic dataset generation has been provided. Using only the original dataset'")
-            self.decode_dataset = self.dataset
-            self.decode_targets = self.targets
-            self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-            return 
-        
-        else:
-            ## 1. Instantiate sampler and generate a set of samples between [0, 1]
-            if n_samples == 'auto':
-                n_samples = self.dataset.shape[0] * 10
-            n_dims = self.dataset.shape[1]
-            rng = np.random.default_rng(self.seed)
+    def _generate_synthetic_dataset(self, sampler: str = None, n_samples: Union[str, int] = 'auto', strategy: str = None, **sampler_kwargs):
 
-            if sampler not in ['sobol', 'lhs', 'random']:
-                logging.warning(f"Sampler {sampler} not recognised. Defaulting to 'random uniform'")
-                sampler = 'random'
-            if sampler == 'sobol':
-                samples = Sobol(d = n_dims, scramble = sampler_kwargs.get('scramble', True), optimization = sampler_kwargs.get('optimization', 'random-cd'), rng = rng).random(n = n_samples)
-            elif sampler == 'lhs':
-                samples = LatinHypercube(d = n_dims, scramble = sampler_kwargs.get('scramble', True), optimization = sampler_kwargs.get('optimization', 'random-cd'), rng = rng).random(n = n_samples)
-            elif sampler == 'random':
-                samples = rng.uniform(low = 0.0, high = 1.0, size = (n_samples, n_dims))
-            # NOTE: for the optimization process of the samples, although lloyd seems to better evenly space the points, it takes much more time to do so
-
-            ## 2. Normalising the original dataset 
-
-            # # 2.1. Handling continuous features 
-            cont_samples = scale(samples[:, self.numerical_idx], l_bounds = np.min(self.dataset[:, self.numerical_idx], axis = 0), u_bounds = np.max(self.dataset[:, self.numerical_idx], axis = 0) + 1e-8)
-
-            # 2.2 Handling categorical features
-            cat_samples = np.zeros_like(samples[:, self.categorical_idx])
-            for i, ft in enumerate(self.categorical_idx):
-                n_categories = len(np.unique(self.dataset[:, ft]))
-                bins = np.linspace(0, 1, n_categories + 1)
-                cat_values = np.digitize(samples[:, ft], bins) - 1
-                cat_samples[:, i] = cat_values       
-
-            # 2.3. Joining them together
-            x_synthetic = np.zeros_like(samples)
-            x_synthetic[:, self.numerical_idx] = cont_samples
-            x_synthetic[:, self.categorical_idx] = cat_samples
-
-
-            ## 3. Generating the synthetic labels
-            y_synthetic = self.model.predict(self._scale_inputs(x_synthetic))
-            # Reshaping targets so that they have always 2 dimensions
-            if len(y_synthetic.shape) == 1:
-                y_synthetic = y_synthetic.reshape(-1, 1)
-
-            ## 4. Handling/overlapping the overall dataset based on the strategy
+        # Generating the synthetic dataset
+        if len(self.numerical_idx) == 0:   # Categorical dataset
+            x_synth, y_synth = generate_categorical_synthetic_dataset(self.dataset, self.model)
+            if x_synth.shape[0] > 1e6:
+                logging.warning("Generated synthetic dataset has more than 1 million samples. This may lead to memory issues. As such, we will be defaulting to the original dataset only")
+                self.decode_dataset = self.dataset
+                self.decode_targets = self.targets
+                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
+            else:
+                self.decode_dataset = x_synth
+                self.decode_targets = y_synth.reshape(-1, 1)
+                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
+        else:   # Continuous or mixed dataset
+            x_synth, y_synth = generate_continuous_synth_dataset(dataset = self.dataset, 
+                                                                    scaler = self.scalerX,
+                                                                    model = self.model,
+                                                                    numerical_idx = self.numerical_idx,
+                                                                    categorical_idx = self.categorical_idx,
+                                                                    sampler_name = sampler,
+                                                                    n_samples = n_samples,
+                                                                    seed = self.seed, 
+                                                                    **sampler_kwargs)
             if strategy == 'synth':
-                self.decode_dataset = x_synthetic
-                self.decode_targets = y_synthetic
+                self.decode_dataset = x_synth
+                self.decode_targets = y_synth.reshape(-1, 1)
+                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
             elif strategy == 'both':
-                self.decode_dataset = np.concatenate((self.dataset, x_synthetic), axis = 0)
-                self.decode_targets = np.concatenate((self.targets, y_synthetic), axis = 0)
-            self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-            return
+                self.decode_dataset = np.concatenate((self.dataset, x_synth), axis = 0)
+                self.decode_targets = np.concatenate((self.targets, y_synth.reshape(-1, 1)), axis = 0)
+                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
+
         
 
     ###############################################################
