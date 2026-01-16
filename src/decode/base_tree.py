@@ -16,6 +16,7 @@ from joblib import Parallel, delayed
 import logging 
 from scipy.stats.qmc import Sobol, LatinHypercube, scale
 from sklearn.model_selection import train_test_split 
+from copy import deepcopy
 
 class BaseTree(ABC):
 
@@ -703,3 +704,63 @@ class BaseTree(ABC):
         """        
         pass
         
+
+
+    
+    #######################################################################
+    ########################### PRUNING THE TREE ##########################
+    #######################################################################
+
+    def prune_tree(self, by: str = 'depth', threshold: Union[int, float] = 5):
+        """
+            Function that will prune the tree based on a particular criterium
+            Args:
+                - by (str): criterium to be used to prune the tree. Options are 'depth' or 'impurity'
+                - threshold (Union[int, float]): threshold to be used when pruning by the chosen criterium. For 'depth', this is an int. For 'impurity', this is a float.
+        """
+
+        if by not in ['depth', 'impurity']:
+            raise ValueError("Pruning criterium not recognised. Please choose one of: 'depth', 'impurity'.")
+       
+        # Deepcopying the tree to avoid any issues
+        pruned_tree = deepcopy(self)
+        # Turning all characteristics of the nodes into arrays for easier handling and indexing
+        # NOTE: node_ds is difficult to turn into a numpy array
+        class_, class_dist, depth, feature, impurity, leaf, left, n_node_samples, parent, value = np.array(pruned_tree.CLASS), np.array(pruned_tree.CLASS_DIST), np.array(pruned_tree.DEPTH), np.array(pruned_tree.FEATURE), np.array(pruned_tree.IMPURITY), np.array(pruned_tree.LEAF), np.array(pruned_tree.LEFT), np.array(pruned_tree.N_NODE_SAMPLES), np.array(pruned_tree.PARENT), np.array(pruned_tree.VALUE)
+
+        # By depth
+        if by == 'depth':
+            # Identifying target nodes
+            target_idx = np.where(depth <= threshold)[0]
+        
+        elif by == 'impurity':
+            # The first one node is always included
+            target_idx = [0]
+            for idx in range(1, len(impurity)):
+                c1 = impurity[idx] >= threshold                     # Current node impurity above threshold
+                c2 = parent[idx] in target_idx                  # Parent node is included (previously complied with all criteria)
+                c3 = np.all(impurity[parent == parent[idx]] >= threshold)   # The sibling nodes also comply with the impurity threshold
+                if c1 and c2 and c3:
+                    target_idx.append(idx)
+            target_idx = np.array(target_idx)
+
+        # Updating all tree characteristics
+        pruned_tree.CLASS = list(class_[target_idx])
+        pruned_tree.CLASS_DIST = list(class_dist[target_idx])
+        pruned_tree.DEPTH = list(depth[target_idx])
+        pruned_tree.FEATURE = list(feature[target_idx])
+        pruned_tree.IMPURITY = list(impurity[target_idx])
+        pruned_tree.LEAF = list(leaf[target_idx])
+        pruned_tree.LEFT = list(left[target_idx])
+        pruned_tree.N_NODE_SAMPLES = list(n_node_samples[target_idx])
+        pruned_tree.PARENT = list(parent[target_idx])
+        pruned_tree.VALUE = list(value[target_idx])
+        # Updating the NODE_DS
+        new_node_ds = []
+        for idx in target_idx:
+            new_node_ds.append(pruned_tree.NODE_DS[idx])
+        pruned_tree.NODE_DS = new_node_ds
+
+        return pruned_tree
+
+
