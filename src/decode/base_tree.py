@@ -350,7 +350,9 @@ class BaseTree(ABC):
                         new_edges = list(edges)
                         for b in refine_bins:
                             # re-split the bin locally
-                            mask = (feature_data > edges[b]) & (feature_data <= edges[b+1])
+                            lo = -np.inf if b == 0 else edges[b-1]
+                            hi =  np.inf if b == len(edges) else edges[b]
+                            mask = (feature_data > lo) & (feature_data <= hi)
                             if np.sum(mask) < 2:  # skip tiny bins
                                 continue
                             sub_qs = np.linspace(0, 1, refine_factor + 1)

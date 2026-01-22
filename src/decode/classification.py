@@ -61,8 +61,33 @@ class ClassificationTree(BaseTree):
         else:
             return y_raw.astype(int)
 
+    # # Auxiliary methods to conduct bin refinement 
+    # def _refine_step_bins(self, feature_data: np.ndarray, preds: np.ndarray, bin_idx: np.ndarray, edges: np.ndarray):
+    #     """
+    #         Function that will conduct bin refinement (when we want an adaptive discretization process)
+    #         Args:
+    #             - feature_data (np.ndarray): values for the current feature being assessed
+    #             - preds (np.ndarray): current predictions conducted by the model
+    #             - bin_idx (np.ndarray): array with info, for each predicted sample, on their current bin for the current discretization
+    #             - edges (np.ndarray): all current discretization values
+    #         Return:
+    #             - refine_bins (np.ndarray): array with the bin indexes to be refined
+    #     """
+    #     # NOTE: STILL IN DEVELOPMENT!
+    #     bin_vars = [np.var(preds[bin_idx == i], ddof=1) if np.sum(bin_idx == i) > 1 else np.nan for i in range(len(edges)-1)]
+    #     refine_bins = np.where(bin_vars > np.median(bin_vars) * 1.5)[0]
+
+    #     return refine_bins
+    
     # Auxiliary methods to conduct bin refinement 
-    def _refine_step_bins(self, feature_data: np.ndarray, preds: np.ndarray, bin_idx: np.ndarray, edges: np.ndarray):
+    def _refine_step_bins(self, 
+                          feature_data: np.ndarray, 
+                          preds: np.ndarray, 
+                          bin_idx: np.ndarray, 
+                          edges: np.ndarray,
+                          min_bin: int = 2,
+                          score_mult: float = 1,
+                          ):
         """
             Function that will conduct bin refinement (when we want an adaptive discretization process)
             Args:
@@ -70,14 +95,62 @@ class ClassificationTree(BaseTree):
                 - preds (np.ndarray): current predictions conducted by the model
                 - bin_idx (np.ndarray): array with info, for each predicted sample, on their current bin for the current discretization
                 - edges (np.ndarray): all current discretization values
+                - min_bin (int): minimum number of samples required in a bin to consider refining it
+                - score_mult (float): threshold multiplier relative to median score: refine if score > median * score_mult
+
             Return:
                 - refine_bins (np.ndarray): array with the bin indexes to be refined
         """
         # NOTE: STILL IN DEVELOPMENT!
-        bin_vars = [np.var(preds[bin_idx == i], ddof=1) if np.sum(bin_idx == i) > 1 else np.nan for i in range(len(edges)-1)]
-        refine_bins = np.where(bin_vars > np.median(bin_vars) * 1.5)[0]
+        n_bins = len(edges) + 1
+        scores = np.full(n_bins, np.nan, dtype=float)
+        counts = np.zeros(n_bins, dtype=int)
 
-        return refine_bins
+        for b in range(n_bins):
+            mask = (bin_idx == b)
+            n_b = int(np.sum(mask))
+            counts[b] = n_b
+            if n_b < min_bin:
+                continue
+
+            pb = preds[mask]
+
+            # # Case 1: Soft classification (prob vectors)
+            # if pb.ndim == 2:
+            #     # dispersion around bin-mean probability vector
+            #     pbar = pb.mean(axis=0, keepdims=True)            # (1, C)
+            #     l1 = np.sum(np.abs(pb - pbar), axis=1)           # (n_b,)
+
+            #     # optional: emphasize uncertain points (boundary-ish)
+            #     w = self.log_loss(pb)                                  # (n_b,)
+            #     score = (w @ l1) / (np.sum(w) + 1e-12)
+
+            # Case 2: Hard labels (classification) or regression scalar output
+            # else:
+            # If you *know* the tree type (clf/reg), branch explicitly instead of heuristics.
+            
+            if np.issubdtype(pb.dtype, np.integer):
+                # Gini impurity inside bin
+                _, cnts = np.unique(pb, return_counts=True)
+                probs = cnts / cnts.sum()
+                score = 1.0 - np.sum(probs ** 2)
+            else:
+                # Regression: variance inside bin
+                score = float(np.var(pb, ddof=1)) if n_b > 1 else 0.0
+        
+            # stabilize: prefer refining bins with enough support
+            scores[b] = score * np.log1p(n_b)
+        
+        valid = np.where(~np.isnan(scores))[0]
+        if len(valid) == 0:
+            return []
+        med = np.nanmedian(scores[valid])
+
+        # Bins to refine based on the threshold
+        refine_bins = valid[scores[valid] > (med * score_mult)]
+
+        return refine_bins.tolist()            
+        
     
     # Calculating impurity
     def _impurity_calculation(self, preds: np.ndarray, criterium: str = 'default'):
