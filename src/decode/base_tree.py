@@ -100,6 +100,10 @@ class BaseTree(ABC):
             sampler_kwargs = synth_ds_info.get('sampler_kwargs', {})
             self._generate_synthetic_dataset(sampler = sampler, n_samples = n_samples, strategy = strategy, **sampler_kwargs)
 
+        # Conducting the predictions with the model
+        model_preds = self.model.predict(self.decode_normalised_dataset)
+        self.model_preds = self._postprocess_prediction(model_preds) 
+
         # Resetting the tree
         self._reset_tree()
 
@@ -334,9 +338,7 @@ class BaseTree(ABC):
                         edges = edges[1:-1]
 
                     # Make predictions with the model
-                    inp_dataset = self.decode_normalised_dataset[dataset_idx, :]
-                    preds = self.model.predict(inp_dataset)       
-                    preds = self._postprocess_prediction(preds)             
+                    preds = self.model_preds[dataset_idx]      
                     
                     # Iterate to find possible refinment of bins
                     for _ in range(n_refine):
@@ -485,7 +487,7 @@ class BaseTree(ABC):
             self.class_weights = None
 
 
-    def build_tree(self, 
+    def fit(self, 
                    max_depth: int = 5,
                    imp_threshold: float = 0.0,
                    n_steps: Union[str, int] = 'auto',
@@ -524,8 +526,7 @@ class BaseTree(ABC):
 
         ### 1. INITIAL NODE TRIAL
         original_idx = np.arange(len(self.decode_dataset))
-        original_preds = self.model.predict(self.decode_normalised_dataset)
-        original_preds = self._postprocess_prediction(original_preds)            
+        original_preds = self.model_preds     
         step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive)
         final_res = self.execute_trial(original_idx, original_preds, step_info, criterium = criterium)
         if final_res is None:
@@ -554,11 +555,9 @@ class BaseTree(ABC):
                 left_mask = current_ds[:, self.FEATURE[prev_node_index]] <= self.VALUE[prev_node_index]
                 left_ds_idx = self.NODE_DS[prev_node_index][left_mask]
                 right_ds_idx = self.NODE_DS[prev_node_index][~left_mask]
-                left_preds = self.model.predict(self.decode_normalised_dataset[left_ds_idx])
-                right_preds = self.model.predict(self.decode_normalised_dataset[right_ds_idx])
-                left_preds = self._postprocess_prediction(left_preds)
-                right_preds = self._postprocess_prediction(right_preds)
-
+                left_preds = self.model_preds[left_ds_idx]
+                right_preds = self.model_preds[right_ds_idx]
+                
                 ## 2.2. PROCESS LEFT NODE
                 if len(left_ds_idx) > 0:
                     self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = left_ds_idx, preds = left_preds, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = True)
@@ -577,11 +576,12 @@ class BaseTree(ABC):
     def _return_leaf_output(self, node_idx: int):
         """ Handled by each subclass to return the adequate predictions """
 
-    def make_predictions(self, samples: np.ndarray):
+    def predict(self, samples: np.ndarray, return_paths: bool = False):
         """
             Make predictions for one or multiple samples based on the decision tree rules defined by the parameters.
             Args:
                 - samples (np.ndarray): One or multiple samples to predict (must be in the shape of (n_samples, n_features))
+                - return_paths (bool): whether to return the prediction paths for each sample
             Returns:
                 - predictions (np.ndarray): Array with the predictions for each sample
                 - prediction_paths (list): list of lists, where each sublist contains the nodes traversed for each sample
@@ -604,7 +604,8 @@ class BaseTree(ABC):
                 if (self.LEAF[current_node] == 1 or self.FEATURE[current_node] is None or self.VALUE[current_node] is None):
                     pred = self._return_leaf_output(node_idx = current_node)
                     predictions.append(pred)
-                    prediction_paths.append(pred_path)
+                    if return_paths:
+                        prediction_paths.append(pred_path)
                     break
 
                 # Otherwise...
@@ -614,7 +615,8 @@ class BaseTree(ABC):
                     for index, parent in enumerate(self.PARENT):
                         if parent == current_node and self.LEFT[index] == 1:  # it only happens if the parent of the next node is the current node and its LEFT array says it is indeed a left child (that node)
                             current_node = index
-                            pred_path.append(current_node)
+                            if return_paths:
+                                pred_path.append(current_node)
                             break
                         else:
                             continue
@@ -623,12 +625,16 @@ class BaseTree(ABC):
                     for index, parent in enumerate(self.PARENT):
                         if parent == current_node and self.LEFT[index] == 0:  # it only happens if the parent of the next node is the current node and its RIGHT array says it is indeed a right child (that node)
                             current_node = index
-                            pred_path.append(current_node)
+                            if return_paths:
+                                pred_path.append(current_node)
                             break
                         else:
                             continue
 
-        return np.array(predictions), prediction_paths
+        if not return_paths:
+            return np.array(predictions)
+        else:
+            return np.array(predictions), prediction_paths
 
  
     ###################################################################

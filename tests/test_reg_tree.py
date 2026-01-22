@@ -34,15 +34,16 @@ class TestRegressionTree(unittest.TestCase):
                               dataset = self.X,
                               targets = self.y)
         # Tree building process
-        tree.build_tree(max_depth = 5,
-                        imp_threshold = 0.05,
-                        min_samples_split = 2,
-                        min_impurity_decrease = 0,
-                        criterium = 'mse')
+        tree.fit(max_depth = 5,
+                 imp_threshold = 0.05,
+                 min_samples_split = 2,
+                 min_impurity_decrease = 0,
+                 criterium = 'mse')
         
         # Tree predictions for entire dataset + one sample
-        preds, paths = tree.make_predictions(self.X)
-        one_pred, one_path = tree.make_predictions(self.X[0])
+        preds, paths = tree.predict(self.X, return_paths = True)
+        preds = tree.predict(self.X)
+        one_pred, one_path = tree.predict(self.X[0], return_paths = True)
 
         # Computing feature importances
         tree.compute_feature_importance()

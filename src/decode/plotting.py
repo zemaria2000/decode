@@ -333,7 +333,7 @@ def box_plots(tree, only_leaf: bool = True):
     # List of datasets for each node
     node_ds_list = []
     for ds_idx in tree.NODE_DS:
-        node_ds_list.append(tree.normalised_dataset[ds_idx])
+        node_ds_list.append(tree.decode_normalised_dataset[ds_idx])
 
     for i, ds in enumerate(node_ds_list):
         

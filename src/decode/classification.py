@@ -28,6 +28,8 @@ class ClassificationTree(BaseTree):
                  root_path: str = None, 
                  use_logging: bool = True):
         
+        self.task = 'classification'
+        
         super().__init__(
             model = model,
             scalerX = scalerX,
@@ -43,7 +45,7 @@ class ClassificationTree(BaseTree):
             root_path = root_path,
             use_logging = use_logging
         )
-        self.task = 'classification'
+        
 
     # Auxiliar method to postprocess classification outputs
     def _postprocess_classification(self, y_raw):
