@@ -12,7 +12,7 @@ from itertools import product
 ######################################################
 
 def generate_continuous_synth_dataset(dataset: np.ndarray,
-                                      scaler: np.ndarray,
+                                      scaler,
                                       model,
                                       numerical_idx: Union[np.ndarray, list],
                                       categorical_idx: Union[np.ndarray, list],
@@ -95,7 +95,8 @@ def generate_continuous_synth_dataset(dataset: np.ndarray,
 
     # 3. Generating the synthetic labels 
     x_synthetic_scaled = x_synthetic.copy()
-    x_synthetic_scaled[:, numerical_idx] = scaler.transform(x_synthetic[:, numerical_idx])
+    if scaler is not None:
+        x_synthetic_scaled[:, numerical_idx] = scaler.transform(x_synthetic[:, numerical_idx])
     y_synthetic = model.predict(x_synthetic_scaled)
 
     return x_synthetic, y_synthetic
