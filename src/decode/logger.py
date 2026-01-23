@@ -24,6 +24,7 @@ log_file = os.path.join(LOG_DIR, f"tree_build_{timestamp}.log")
 # --- 4. Configure logger ---
 logger = logging.getLogger("xai_tree")
 logger.setLevel(logging.DEBUG)
+logger.propagate = False  
 
 if not logger.handlers:  # Prevent duplicate logs when re-imported
     # Console handler

@@ -21,10 +21,10 @@ plt.rcParams['axes.linewidth'] = 1.0
 
 # Use LaTeX for rendering text
 plt.rcParams['text.usetex'] = True
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = 'CMU'
 # plt.rcParams['font.family'] = 'sans-serif'
-# plt.rcParams['font.sans-serif'] = 'CMU'
-plt.rcParams['font.family'] = 'serif'
-plt.rcParams['font.serif'] = 'CMU'
+# plt.rcParams['font.serif'] = 'CMU'
 plt.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}'
 
 

@@ -3,9 +3,10 @@
 """
 
 # xai_tree/regression.py
+import logging
 import numpy as np
 from .base_tree import BaseTree
-from .utils import log_loss, gini
+from .utils import *
 from typing import Union
 from .plotting import plot_classification_tree
 import matplotlib.pyplot as plt
@@ -26,7 +27,8 @@ class ClassificationTree(BaseTree):
                  synth_ds_info: dict = None,
                  seed: int = 42, 
                  root_path: str = None, 
-                 use_logging: bool = True):
+                 use_logging: bool = True,
+                 log_level = logging.INFO):
         
         self.task = 'classification'
         
@@ -43,7 +45,8 @@ class ClassificationTree(BaseTree):
             synth_ds_info = synth_ds_info,
             seed = seed,
             root_path = root_path,
-            use_logging = use_logging
+            use_logging = use_logging,
+            log_level = log_level
         )
         
 
@@ -61,132 +64,141 @@ class ClassificationTree(BaseTree):
         else:
             return y_raw.astype(int)
 
-    # # Auxiliary methods to conduct bin refinement 
-    # def _refine_step_bins(self, feature_data: np.ndarray, preds: np.ndarray, bin_idx: np.ndarray, edges: np.ndarray):
-    #     """
-    #         Function that will conduct bin refinement (when we want an adaptive discretization process)
-    #         Args:
-    #             - feature_data (np.ndarray): values for the current feature being assessed
-    #             - preds (np.ndarray): current predictions conducted by the model
-    #             - bin_idx (np.ndarray): array with info, for each predicted sample, on their current bin for the current discretization
-    #             - edges (np.ndarray): all current discretization values
-    #         Return:
-    #             - refine_bins (np.ndarray): array with the bin indexes to be refined
-    #     """
-    #     # NOTE: STILL IN DEVELOPMENT!
-    #     bin_vars = [np.var(preds[bin_idx == i], ddof=1) if np.sum(bin_idx == i) > 1 else np.nan for i in range(len(edges)-1)]
-    #     refine_bins = np.where(bin_vars > np.median(bin_vars) * 1.5)[0]
-
-    #     return refine_bins
-    
-    # Auxiliary methods to conduct bin refinement 
-    def _refine_step_bins(self, 
-                          feature_data: np.ndarray, 
-                          preds: np.ndarray, 
-                          bin_idx: np.ndarray, 
-                          edges: np.ndarray,
-                          min_bin: int = 2,
-                          score_mult: float = 1,
-                          ):
+    def _refine_step_bins(
+        self,
+        preds: np.ndarray,
+        bin_idx: np.ndarray,
+        edges: np.ndarray,
+        criterium: str,
+        min_bin: int = 10,
+        score_mult: float = 1.0,
+        support: str = "log",      # "none" | "log" | "sqrt"
+    ):
         """
-            Function that will conduct bin refinement (when we want an adaptive discretization process)
+            Refine bins whose within-bin impurity (using the same criterium as the tree) is high relative to the median.
             Args:
-                - feature_data (np.ndarray): values for the current feature being assessed
-                - preds (np.ndarray): current predictions conducted by the model
-                - bin_idx (np.ndarray): array with info, for each predicted sample, on their current bin for the current discretization
-                - edges (np.ndarray): all current discretization values
-                - min_bin (int): minimum number of samples required in a bin to consider refining it
-                - score_mult (float): threshold multiplier relative to median score: refine if score > median * score_mult
-
-            Return:
-                - refine_bins (np.ndarray): array with the bin indexes to be refined
+                - preds (np.ndarray): soft predictions for the samples in the current node
+                - bin_idx (np.ndarray): bin indices for each sample
+                - edges (np.ndarray): edges used for binning
+                - criterium (str): criterium for impurity calculation
+                - min_bin (int): minimum number of samples in a bin to consider it for refinement
+                - score_mult (float): multiplier for the median score to consider a bin for refinement
+                - support (str): support factor to use ("none", "log", "sqrt")
+            Returns:
+                - refine_bins (list): list of bin indices to be refined
         """
-        # NOTE: STILL IN DEVELOPMENT!
         n_bins = len(edges) + 1
         scores = np.full(n_bins, np.nan, dtype=float)
-        counts = np.zeros(n_bins, dtype=int)
 
+        # For each bin, a score will be computed to assess whether it should be refined or not
         for b in range(n_bins):
             mask = (bin_idx == b)
-            n_b = int(np.sum(mask))
-            counts[b] = n_b
+            n_b = int(mask.sum())
             if n_b < min_bin:
                 continue
 
-            pb = preds[mask]
+            # Computing the impurity score of the current bin
+            pb = preds[mask] 
+            score = float(self._impurity_calculation(pb, criterium))
 
-            # # Case 1: Soft classification (prob vectors)
-            # if pb.ndim == 2:
-            #     # dispersion around bin-mean probability vector
-            #     pbar = pb.mean(axis=0, keepdims=True)            # (1, C)
-            #     l1 = np.sum(np.abs(pb - pbar), axis=1)           # (n_b,)
-
-            #     # optional: emphasize uncertain points (boundary-ish)
-            #     w = self.log_loss(pb)                                  # (n_b,)
-            #     score = (w @ l1) / (np.sum(w) + 1e-12)
-
-            # Case 2: Hard labels (classification) or regression scalar output
-            # else:
-            # If you *know* the tree type (clf/reg), branch explicitly instead of heuristics.
-            
-            if np.issubdtype(pb.dtype, np.integer):
-                # Gini impurity inside bin
-                _, cnts = np.unique(pb, return_counts=True)
-                probs = cnts / cnts.sum()
-                score = 1.0 - np.sum(probs ** 2)
+            # Optional support factor to avoid over-refining tiny bins
+            if support == "log":
+                score *= np.log1p(n_b)
+            elif support == "sqrt":
+                score *= np.sqrt(n_b)
+            elif support == "none":
+                pass
             else:
-                # Regression: variance inside bin
-                score = float(np.var(pb, ddof=1)) if n_b > 1 else 0.0
-        
-            # stabilize: prefer refining bins with enough support
-            scores[b] = score * np.log1p(n_b)
-        
+                raise ValueError(f"Unknown support='{support}'")
+
+            # Output score for the bin
+            scores[b] = score
+
+        # Decide which bins to refine
         valid = np.where(~np.isnan(scores))[0]
-        if len(valid) == 0:
+        if valid.size == 0:
             return []
         med = np.nanmedian(scores[valid])
-
-        # Bins to refine based on the threshold
         refine_bins = valid[scores[valid] > (med * score_mult)]
-
-        return refine_bins.tolist()            
         
-    
-    # Calculating impurity
-    def _impurity_calculation(self, preds: np.ndarray, criterium: str = 'default'):
+        return refine_bins.tolist()   
+        
+
+    def _impurity_calculation(self, preds: np.ndarray, criterium: str,
+                            eps: float = 1e-12) -> float:
         """
-            Impurity calculation based on the criterium chosen
+            Computing the impurity of a node based on the selected criterium
             Args:
-                - preds (np.ndarray): predictions conducted by the model
-                - criterium (str): default, or 'gini', 'log_loss'
+                - preds (np.ndarray): model predictions for the samples in the current node (can either be hard or soft labels, depending on the chosen criterium)
+                - criterium (str): criterium for impurity calculation
+                - eps (float): small value to ensure numerical stability
             Returns:
-                - score (float): the target candidate score
+                - impurity (float): impurity score for the current node
         """
-        # Auxiliary step for calculating the prediction distribution
-        preds_dist = np.bincount(preds, minlength = len(self.target_names))
-        if self.class_weights is not None:
-            probs = (list(self.class_weights.values())*preds_dist)/np.sum(list(self.class_weights.values())*preds_dist)
-        else:
-            probs = preds_dist/np.sum(preds_dist)
-        if criterium == 'default' or criterium == 'log_loss':
-            return log_loss(probs)
-        elif criterium == 'gini':
-            return gini(probs)
+        if preds.shape[0] == 0:
+            return 0.0  # convention; should not happen due to min_samples_split
+
+        # Ensure probability predictions are normalised
+        if criterium not in ['gini', 'log_loss']:
+            P = safe_normalize_probs(preds, eps=eps)
+            meanP = P.mean(axis=0)  # node prototype distribution
+
+        c = criterium.lower()
+
+        ## 1. CALCULATIONS BASED ON HARD LABELS
+        if c in ['gini', 'log_loss']:
+            class_counts = np.bincount(preds, minlength = len(self.target_names))
+            probs = class_counts / class_counts.sum()
+            if c == 'gini':
+                return gini(probs)
+            elif c == 'log_loss':
+                return log_loss(probs)
+        
+        ## 2. CALCULATIONS BASED ON SOFT LABELS
+        # 2.1. Soft gini
+        if c in ("soft_gini", "gini_mean", "mean_gini"):
+            return float(1.0 - np.sum(meanP ** 2))
+        # 2.2. Brier dispersion around node prototype
+        if c in ("brier", "l2_dispersion", "brier_dispersion"):
+            # optional: component weights to fight class-imbalance dominance
+            class_w = getattr(self, "class_weights", None) 
+            imp_per_class = brier_dispersion_to_mean(P, meanP, class_weights = class_w, eps = eps)
+            return float(imp_per_class.mean())
+        # 2.3. Jensen-Shannon dispersion around node prototype
+        if c in ("js", "js_dispersion", "jensen-shannon"):
+            imp_per_class = js_to_mean(P, meanP, eps = eps)
+            return float(imp_per_class.mean())
+        # 2.4. Hellinger dispersion around node prototype
+        if c in ("hellinger", "hellinger2", "hellinger_dispersion"):
+            imp_per_class = hellinger2_to_mean(P, meanP, eps = eps)
+            return float(imp_per_class.mean())
+        # 2.5. Total Variation dispersion around node prototype
+        if c in ("tv", "total_variation", "tv_dispersion"):
+            imp_per_class = tv_to_mean(P, meanP, eps = eps)
+            return float(imp_per_class.mean())
+        # 2.6. KL dispersion around node prototype
+        if c in ("kl", "kl_dispersion"):
+            imp_per_class = kl_to_mean(P, meanP, eps = eps)
+            return float(imp_per_class.mean())
+
+        raise ValueError(f"Unknown criterium '{criterium}'. "
+                        f"Supported: soft_gini, brier_dispersion, js_dispersion, hellinger_dispersion, tv_dispersion, kl_dispersion.")        
 
 
-    def _initialise_root_node(self, final_res, original_preds: np.ndarray = None):
+
+    def _initialise_root_node(self, final_res, criterium: str):
         """
             Initialising the root node information
             Args:
                 - final_res (tuple): tuple that comprises the best candidate score, in the form of (feature_idx, feature_value, candidate_score)
-                - original_preds (np.ndarray): original predictions for the entire dataset
+                - criterium (str): criterium for impurity calculation
         """
         # Auxiliary variable - class distribution for the original targets
         target_dist = np.unique(self.decode_targets, return_counts = True)[1]
 
         ## Appending the necessary information
         self.N_NODE_SAMPLES.append(len(self.decode_dataset))
-        self.IMPURITY.append(self._impurity_calculation(original_preds, 'gini'))
+        self.IMPURITY.append(self._impurity_calculation(self.model_preds if criterium in ['gini', 'log_loss'] else self.model_probs, criterium = criterium))
         self.VALUE.append(final_res[1])
         self.FEATURE.append(int(final_res[0]))
         self.LEFT.append(0)                      
@@ -202,7 +214,6 @@ class ClassificationTree(BaseTree):
                      prev_node_idx: int, 
                      current_depth: int, 
                      dataset_idx: np.ndarray, 
-                     preds: np.ndarray,
                      n_steps: Union[str, int], 
                      adaptive: bool, 
                      criterium: str, 
@@ -213,14 +224,13 @@ class ClassificationTree(BaseTree):
                 - prev_node_idx (int): parent node index
                 - current_depth (int): current depth in the tree
                 - dataset_idx (np.ndarray): indexes, relative to the original dataset, of the current dataset being assessed
-                - preds (np.ndarray): predictions for the current dataset being evaluated
                 - n_steps (Union[str, int]): steps approach for discretization
                 - adaptive (bool): whether to implement adaptive discretization
                 - criterium (str): criterium for loss assessment in the tree
                 - left (bool): if we are in a left (True) or a right (False) node
         """
-        logger.debug(f"Expanding node {prev_node_idx} (depth={self.DEPTH[prev_node_idx]}) → "
-             f"feature={self.feature_names[self.FEATURE[prev_node_idx]]}, threshold={self.VALUE[prev_node_idx]:.3f}")
+        logger.debug(f"Expanding node {prev_node_idx} (depth={self.DEPTH[prev_node_idx]}) | "
+             f"feature={self.feature_names[self.FEATURE[prev_node_idx]]} | threshold={self.VALUE[prev_node_idx]:.3f}")
 
         # 0. Some initial base information regarding the node
         self.LEFT.append(1 if left else 0)
@@ -229,38 +239,47 @@ class ClassificationTree(BaseTree):
         self.NODE_DS.append(dataset_idx)
 
         # 1. Initial information for the tree
-        node_imp = self._impurity_calculation(preds, 'gini')
-        preds_dist = np.bincount(preds, minlength = len(self.target_names))
-        self.N_NODE_SAMPLES.append(len(preds))
+        node_imp = self._impurity_calculation(self.model_preds[dataset_idx] if criterium in ['gini', 'log_loss'] else self.model_probs[dataset_idx], criterium = criterium)
+
+        preds_dist = np.bincount(self.model_preds[dataset_idx], minlength = len(self.target_names))
+        self.N_NODE_SAMPLES.append(len(dataset_idx))
         self.IMPURITY.append(node_imp)
         self.CLASS.append(np.argmax(preds_dist))
         self.CLASS_DIST.append(preds_dist)
 
         # 1st verification - impurity threshold or max depth
-        if node_imp < self.imp_threshold or current_depth == self.max_depth:
+        if node_imp <= self.imp_threshold or current_depth == self.max_depth:
             self.LEAF.append(1)
             self.VALUE.append(None)
             self.FEATURE.append(None)
             if current_depth == self.max_depth:
                 logger.debug(f"Max depth reached at node {len(self.FEATURE)-1} -> leaf node")
-            if node_imp < self.imp_threshold:
-                logger.debug(f"Stopping split: impurity {node_imp:.4f} < threshold {self.imp_threshold}")
+            if node_imp <= self.imp_threshold:
+                logger.debug(f"Stopping split: impurity {node_imp:.4f} <= threshold {self.imp_threshold}")
+        
+        # 2nd verification
+        elif np.sum(preds_dist) == preds_dist[np.argmax(preds_dist)]:
+            self.LEAF.append(1)
+            self.VALUE.append(None)
+            self.FEATURE.append(None)
+            logger.debug(f"All samples belong to the same class at node {len(self.FEATURE)-1} -> leaf node")
+
         else:
             # Conduct the optimisation process for the rule
             step_info = self._create_auto_steps(dataset_idx, n_steps = n_steps, adaptive = adaptive)
-            final_res = self.execute_trial(dataset_idx, preds, step_info, criterium = criterium)
+            final_res = self.execute_trial(dataset_idx, step_info, criterium = criterium)
             # In case no target rule was found
             if final_res is None:
-                logger.warning(f"No acceptable candidate split was found for node {prev_node_idx}. Marking it as a leaf node")
+                logger.warning(f"No acceptable candidate split was found for node {len(self.FEATURE)}. Marking it as a leaf node")
                 self.LEAF.append(1)
                 self.VALUE.append(None)
                 self.FEATURE.append(None)            
             else:
-                logger.debug(f"Candidate split found for node {prev_node_idx}: Rule is {int(final_res[0])} <= {final_res[1]}")
+                logger.debug(f"Candidate split found for node {len(self.FEATURE)-1}: Rule is {int(final_res[0])} <= {final_res[1]}")
                 self.LEAF.append(0)
                 self.VALUE.append(final_res[1])
                 self.FEATURE.append(int(final_res[0]))
-        logger.debug(f"Details: number of samples = {self.N_NODE_SAMPLES[-1]}, impurity = {self.IMPURITY[-1]}, output class = {self.CLASS[-1]}, class distribution = {self.CLASS_DIST[-1]}")
+        logger.debug(f"Details: number of samples = {self.N_NODE_SAMPLES[-1]} | impurity = {self.IMPURITY[-1]} | output class = {self.CLASS[-1]} | class distribution = {self.CLASS_DIST[-1]}")
     
     def _return_leaf_output(self, node_idx: int):
         """

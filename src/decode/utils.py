@@ -6,6 +6,9 @@ import numpy as np
 import pickle
 from keras import Model as KerasModel
 
+########################################################
+################ METRICS FOR REGRESSION ################
+########################################################
 
 # MSE - regression
 def mse(y: np.ndarray):
@@ -82,6 +85,11 @@ def poisson_deviance(y: np.ndarray):
     poisson = (2/len(y))*np.sum(y*np.log(y/avg_y) - y + avg_y)
     return poisson
 
+
+#########################################################
+######### HARD LABEL METRICS FOR CLASSIFICATION #########
+#########################################################
+
 # Gini score - classification
 def gini(probs: np.ndarray):
     """
@@ -107,6 +115,121 @@ def log_loss(probs: np.ndarray):
     log_loss = - np.sum(probs*np.log(probs))/np.log(2)
     return log_loss
 
+#########################################################
+######### SOFT LABEL METRICS FOR CLASSIFICATION #########
+#########################################################
+
+def safe_normalize_probs(P: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """
+        Ensure probs are valid distributions: clip to [eps, 1], renormalize rows.
+    """
+    P = np.asarray(P, dtype=float)
+    if P.ndim != 2:
+        raise ValueError(f"preds must be 2D (n_samples, n_classes), got shape={P.shape}")
+
+    P = np.clip(P, eps, 1.0)
+    row_sums = P.sum(axis=1, keepdims=True)
+    # avoid division by 0
+    row_sums = np.maximum(row_sums, eps)
+    return P / row_sums
+
+# KL divergence
+def kl(P: np.ndarray, Q: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """
+        Row-wise KL(P || Q). P and Q are (n, K).
+        Returns shape (n,).
+    """
+    P = safe_normalize_probs(P, eps=eps)
+    Q = safe_normalize_probs(Q, eps=eps)
+    return np.sum(P * (np.log(P) - np.log(Q)), axis = 1)
+
+def kl_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """
+    Row-wise KL(P_i || meanP). Returns shape (n,).
+    """
+    P = safe_normalize_probs(P, eps=eps)
+
+    meanP = np.asarray(meanP, dtype=float)
+    meanP = np.clip(meanP, eps, 1.0)
+    meanP = meanP / np.maximum(meanP.sum(), eps)
+
+    M = np.broadcast_to(meanP[None, :], P.shape)
+    return kl(P, M, eps=eps)
+
+
+# Jensen-Shannon divergence
+def js_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """
+        Row-wise JS(P_i, meanP). Returns shape (n,).
+        JS(P, M) = 0.5*KL(P || H) + 0.5*KL(M || H), H = 0.5*(P+M)
+    """
+    P = safe_normalize_probs(P, eps=eps)
+    meanP = np.asarray(meanP, dtype=float)
+    meanP = np.clip(meanP, eps, 1.0)
+    meanP = meanP / np.maximum(meanP.sum(), eps)
+
+    # broadcast meanP to (n, K)
+    M = np.broadcast_to(meanP[None, :], P.shape)
+
+    H = 0.5 * (P + M)
+    # KL per row
+    js = 0.5 * kl(P, H, eps=eps) + 0.5 * kl(M, H, eps=eps)
+    
+    return js
+
+# Hellinger distance
+def hellinger2_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """
+        Row-wise squared Hellinger distance H^2(P_i, meanP).
+        H^2 = (1/2) * sum_k (sqrt(p_k) - sqrt(q_k))^2
+        Returns shape (n,).
+    """
+    P = safe_normalize_probs(P, eps=eps)
+    meanP = np.asarray(meanP, dtype=float)
+    meanP = np.clip(meanP, eps, 1.0)
+    meanP = meanP / np.maximum(meanP.sum(), eps)
+
+    sP = np.sqrt(P)
+    sM = np.sqrt(meanP[None, :])
+    return 0.5 * np.sum((sP - sM) ** 2, axis=1)
+
+# Total Variation distance
+def tv_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """
+        Row-wise Total Variation distance TV(P_i, meanP) = 0.5*sum|p - q|
+        Returns shape (n,).
+    """
+    P = safe_normalize_probs(P, eps=eps)
+    meanP = np.asarray(meanP, dtype=float)
+    meanP = np.clip(meanP, eps, 1.0)
+    meanP = meanP / np.maximum(meanP.sum(), eps)
+    return 0.5 * np.sum(np.abs(P - meanP[None, :]), axis=1)
+
+# Brier dispersion
+def brier_dispersion_to_mean(P: np.ndarray, meanP: np.ndarray, class_weights: np.ndarray | None = None,
+                              eps: float = 1e-12) -> np.ndarray:
+    """
+        Row-wise squared L2 dispersion around mean, optionally component-weighted:
+        d_i = sum_k alpha_k (p_ik - mean_k)^2
+        Returns shape (n,).
+    """
+    P = safe_normalize_probs(P, eps=eps)
+    meanP = np.asarray(meanP, dtype=float)
+    meanP = np.clip(meanP, eps, 1.0)
+    meanP = meanP / np.maximum(meanP.sum(), eps)
+
+    D = (P - meanP[None, :]) ** 2
+    if class_weights is not None:
+        alpha = np.asarray(class_weights, dtype=float)
+        if alpha.shape != (P.shape[1],):
+            raise ValueError(f"class_weights must have shape (n_classes,), got {alpha.shape}")
+        # Normalize alpha to keep scale stable (optional but recommended)
+        alpha = alpha * (P.shape[1] / np.maximum(alpha.sum(), eps))
+        D = D * alpha[None, :]
+    return np.sum(D, axis=1)
+
+
+###########################################################
 
 # Auxiliary function to store numpy objects in a yaml
 def make_serializable(obj):
@@ -135,26 +258,4 @@ def is_picklable(obj):
         return True
     return True
 
-# Auxiliary function to conduct model predictions
-def model_preds(model, X: np.ndarray, model_type: str = 'reg'):
-    """
-        Conducting predictions with a given model in a unified way (because, for instance, keras methods do not output the same as sklearn models)
-        Args:
-            - model: the model to use for predictions
-            - X (np.ndarray): input data for predictions
-            - model_type (str): type of model ('reg' for regression, 'clf' for classification)
-    """
-    # NOTE: currently, the function is only adapted to sklearn and keras models
-    if model_type == 'reg':
-        return model.predict(X)
-    else:
-        if isinstance(model, KerasModel):
-            # 2 cases: (1) single output (sigmoid), or (2) one-hot encoded output (softmax)
-            preds = model.predict(X)
-            if preds.shape[1] == 1:
-                return (preds > 0.5).astype(int).flatten()
-            else:
-                return np.argmax(preds, axis = 1)
-        else:
-            return model.predict(X)
 

@@ -19,7 +19,7 @@ class TestClassificationTree(unittest.TestCase):
         self.model = DummyClassifier(strategy = 'uniform')
         self.model.fit(self.X, self.y)
 
-    def test_reg_tree_features(self):
+    def test_clf_tree_features(self):
         # Tree initialisation
         tree = ClassificationTree(model = self.model,
                               scalerX = None,
@@ -28,10 +28,11 @@ class TestClassificationTree(unittest.TestCase):
                               targets = self.y)
         # Tree building process
         tree.fit(max_depth = 5,
-                 imp_threshold = 0.05,
-                 min_samples_split = 2,
+                 imp_threshold = 0,
+                 min_samples_split = 1,
                  min_impurity_decrease = 0,
-                 class_weights = 'balanced')
+                 class_weights = None,
+                 criterium = 'hellinger')
         
         # Tree predictions for entire dataset + one sample
         preds, paths = tree.predict(self.X, return_paths = True)
