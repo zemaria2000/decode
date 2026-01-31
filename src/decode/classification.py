@@ -122,10 +122,10 @@ class ClassificationTree(BaseTree):
         refine_bins = valid[scores[valid] > (med * score_mult)]
         
         return refine_bins.tolist()   
-        
 
-    def _impurity_calculation(self, preds: np.ndarray, criterium: str,
-                            eps: float = 1e-12) -> float:
+    def _impurity_calculation(self, preds: np.ndarray, criterium,
+                            eps: float = 1e-12,
+                            alpha: float = 0.5) -> float:
         """
             Computing the impurity of a node based on the selected criterium
             Args:
@@ -138,52 +138,84 @@ class ClassificationTree(BaseTree):
         if preds.shape[0] == 0:
             return 0.0  # convention; should not happen due to min_samples_split
 
+        # Hard labels
+        hard_preds = np.argmax(preds, axis = 1)
+        class_counts = np.bincount(hard_preds, minlength = len(self.target_names))
+        probs = class_counts / class_counts.sum()
+        # Soft labels
         # Ensure probability predictions are normalised
-        if criterium not in ['gini', 'log_loss']:
-            P = safe_normalize_probs(preds, eps=eps)
-            meanP = P.mean(axis=0)  # node prototype distribution
-
-        c = criterium.lower()
-
-        ## 1. CALCULATIONS BASED ON HARD LABELS
-        if c in ['gini', 'log_loss']:
-            class_counts = np.bincount(preds, minlength = len(self.target_names))
-            probs = class_counts / class_counts.sum()
-            if c == 'gini':
-                return gini(probs)
-            elif c == 'log_loss':
-                return log_loss(probs)
+        P = safe_normalize_probs(preds, eps = eps)
+        meanP = P.mean(axis=0)  # average prediction probabilities
         
-        ## 2. CALCULATIONS BASED ON SOFT LABELS
-        # 2.1. Soft gini
-        if c in ("soft_gini", "gini_mean", "mean_gini"):
-            return float(1.0 - np.sum(meanP ** 2))
-        # 2.2. Brier dispersion around node prototype
-        if c in ("brier", "l2_dispersion", "brier_dispersion"):
-            # optional: component weights to fight class-imbalance dominance
-            class_w = getattr(self, "class_weights", None) 
-            imp_per_class = brier_dispersion_to_mean(P, meanP, class_weights = class_w, eps = eps)
-            return float(imp_per_class.mean())
-        # 2.3. Jensen-Shannon dispersion around node prototype
-        if c in ("js", "js_dispersion", "jensen-shannon"):
-            imp_per_class = js_to_mean(P, meanP, eps = eps)
-            return float(imp_per_class.mean())
-        # 2.4. Hellinger dispersion around node prototype
-        if c in ("hellinger", "hellinger2", "hellinger_dispersion"):
-            imp_per_class = hellinger2_to_mean(P, meanP, eps = eps)
-            return float(imp_per_class.mean())
-        # 2.5. Total Variation dispersion around node prototype
-        if c in ("tv", "total_variation", "tv_dispersion"):
-            imp_per_class = tv_to_mean(P, meanP, eps = eps)
-            return float(imp_per_class.mean())
-        # 2.6. KL dispersion around node prototype
-        if c in ("kl", "kl_dispersion"):
-            imp_per_class = kl_to_mean(P, meanP, eps = eps)
-            return float(imp_per_class.mean())
+        if type(criterium) is str:
+            ## 1. CRITERIA BASED ON HARD LABELS ##
+            # Gini
+            if criterium == 'gini':
+                return gini(probs)
+            # Log loss
+            elif criterium == 'log_loss':
+                return log_loss(probs)
+            
+            ## 2. CRITERIA BASED ON SOFT LABELS + MEAN DISTRIBUTION ##
+            # Soft gini
+            elif criterium == 'soft_gini':
+                return gini(meanP)
+            # Soft log loss
+            elif criterium == 'soft_log_loss':
+                return log_loss(meanP)
+            # Mutual information
+            elif criterium == 'mutual_info':
+                return float(entropy_vec(meanP) - np.mean(entropy_vec(P)))
+            # JS divergence
+            elif criterium == 'js':
+                meanP = P.mean(axis=0)[None, :]  # shape (1,K)
+                return float(np.mean(js_divergence(P, meanP, eps)))
+            # Brier score
+            elif criterium == 'brier':
+                return float(np.mean(np.sum((P - meanP) ** 2, axis=1)))
+            # KL divergence
+            elif criterium == 'kl':
+                meanP = P.mean(axis=0)[None, :]  # shape (1,K)
+                return float(np.mean(kl(P, meanP, eps)))
 
-        raise ValueError(f"Unknown criterium '{criterium}'. "
-                        f"Supported: soft_gini, brier_dispersion, js_dispersion, hellinger_dispersion, tv_dispersion, kl_dispersion.")        
+            ## 3. CRITERIA BASED ON SOFT LABELS + PERFECT DISTRIBUTION ##
+            # Creating the "perfect" distribution
+            labels = np.asarray(hard_preds)
+            one_hot = np.zeros((labels.shape[0], len(self.target_names)))
+            one_hot[np.arange(labels.shape[0]), labels] = 1
+            # Soft label distance to perfect distribution
+            if criterium == 'soft_label_distance_perfect':
+                return np.mean(np.linalg.norm(P - one_hot, axis = 1))
+            # Brier dispersion to perfect distribution
+            elif criterium == 'brier_perfect':
+                return np.mean(np.sum((P - one_hot)**2, axis = 1))
+            # KL divergence to perfect
+            elif criterium == 'kl_perfect':
+                return float(np.mean(kl(P, one_hot, eps)))
+            elif criterium == 'js_perfect':
+                return float(np.mean(js_divergence(P, one_hot, eps)))
+        
+        ## 4. HARD LABEL + SOFT LABEL HYBRID CRITERIA ##
+        elif type(criterium) is tuple:
+            # Hard impurities
+            if criterium[0] == 'gini':
+                hard_imp = gini(probs)/(1-1/len(self.target_names))
+            elif criterium[0] == 'log_loss':
+                hard_imp = log_loss(probs)/np.log(len(self.target_names))
+            # Soft impurities
+            if criterium[1] == 'soft_gini':
+                soft_imp = gini(meanP)/(1-1/len(self.target_names))
+            elif criterium[1] == 'soft_log_loss':
+                soft_imp = log_loss(meanP)/np.log(len(self.target_names))
+            elif criterium[1] == 'mutual_info':
+                soft_imp = float(entropy_vec(meanP) - np.mean(entropy_vec(P)))/np.log(len(self.target_names))
+            elif criterium[1] == 'js':
+                meanP = P.mean(axis=0)[None, :]  # shape (1,K)
+                soft_imp = float(np.mean(js_divergence(P, meanP, eps)))/np.log(2)
+            elif criterium[1] == 'brier':
+                soft_imp = float(np.mean(np.sum((P - meanP) ** 2, axis=1)))/(2*(1-1/len(self.target_names)))
 
+            return float(alpha*hard_imp + (1-alpha)*soft_imp)
 
 
     def _initialise_root_node(self, final_res, criterium: str):
@@ -198,7 +230,8 @@ class ClassificationTree(BaseTree):
 
         ## Appending the necessary information
         self.N_NODE_SAMPLES.append(len(self.decode_dataset))
-        self.IMPURITY.append(self._impurity_calculation(self.model_preds if criterium in ['gini', 'log_loss'] else self.model_probs, criterium = criterium))
+        # self.IMPURITY.append(self._impurity_calculation(self.model_preds if criterium in ['gini', 'log_loss'] else self.model_probs, criterium = criterium))
+        self.IMPURITY.append(self._impurity_calculation(self.model_probs, criterium = 'gini'))
         self.VALUE.append(final_res[1])
         self.FEATURE.append(int(final_res[0]))
         self.LEFT.append(0)                      
@@ -239,7 +272,8 @@ class ClassificationTree(BaseTree):
         self.NODE_DS.append(dataset_idx)
 
         # 1. Initial information for the tree
-        node_imp = self._impurity_calculation(self.model_preds[dataset_idx] if criterium in ['gini', 'log_loss'] else self.model_probs[dataset_idx], criterium = criterium)
+        # node_imp = self._impurity_calculation(self.model_preds[dataset_idx] if criterium in ['gini', 'log_loss'] else self.model_probs[dataset_idx], criterium = criterium)
+        node_imp = self._impurity_calculation(self.model_probs[dataset_idx], criterium = 'gini')
 
         preds_dist = np.bincount(self.model_preds[dataset_idx], minlength = len(self.target_names))
         self.N_NODE_SAMPLES.append(len(dataset_idx))
@@ -256,17 +290,10 @@ class ClassificationTree(BaseTree):
                 logger.debug(f"Max depth reached at node {len(self.FEATURE)-1} -> leaf node")
             if node_imp <= self.imp_threshold:
                 logger.debug(f"Stopping split: impurity {node_imp:.4f} <= threshold {self.imp_threshold}")
-        
-        # 2nd verification
-        elif np.sum(preds_dist) == preds_dist[np.argmax(preds_dist)]:
-            self.LEAF.append(1)
-            self.VALUE.append(None)
-            self.FEATURE.append(None)
-            logger.debug(f"All samples belong to the same class at node {len(self.FEATURE)-1} -> leaf node")
-
+            # Seeing if we already have a perfect class distribution
         else:
             # Conduct the optimisation process for the rule
-            step_info = self._create_auto_steps(dataset_idx, n_steps = n_steps, adaptive = adaptive)
+            step_info = self._create_auto_steps(dataset_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium)
             final_res = self.execute_trial(dataset_idx, step_info, criterium = criterium)
             # In case no target rule was found
             if final_res is None:

@@ -459,7 +459,8 @@ class BaseTree(ABC):
         current_ds = self.decode_dataset[dataset_idx]
 
         # Current preds
-        preds = self.model_preds[dataset_idx] if criterium in ['gini', 'log_loss'] else self.model_probs[dataset_idx]
+        # preds = self.model_preds[dataset_idx] if criterium in ['gini', 'log_loss'] else self.model_probs[dataset_idx]
+        preds = self.model_probs[dataset_idx]
 
         # Conduct all splits
         n_samples = current_ds.shape[0]
@@ -837,6 +838,14 @@ class BaseTree(ABC):
         for idx in target_idx:
             new_node_ds.append(pruned_tree.NODE_DS[idx])
         pruned_tree.NODE_DS = new_node_ds
+
+        # NOTE: This is still not perfect, and only adapted to depth pruning:
+        final_depth_nodes = np.where(np.array(pruned_tree.DEPTH) == np.max(pruned_tree.DEPTH))[0]
+        for node in final_depth_nodes:
+            if pruned_tree.LEAF[node] == 0:
+                pruned_tree.LEAF[node] = 1   # Turning into leaf nodes
+                pruned_tree.FEATURE[node] = None
+                pruned_tree.VALUE[node] = None
 
         return pruned_tree
 

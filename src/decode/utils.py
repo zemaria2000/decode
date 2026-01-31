@@ -143,39 +143,25 @@ def kl(P: np.ndarray, Q: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     Q = safe_normalize_probs(Q, eps=eps)
     return np.sum(P * (np.log(P) - np.log(Q)), axis = 1)
 
-def kl_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    """
-    Row-wise KL(P_i || meanP). Returns shape (n,).
-    """
-    P = safe_normalize_probs(P, eps=eps)
+def kl_divergence(P, Q, eps=1e-12):
+    # KL(P||Q) per-sample
+    P = safe_normalize_probs(P, eps)
+    Q = safe_normalize_probs(Q, eps)
+    return np.sum(P * (np.log(P) - np.log(Q)), axis=1)
 
-    meanP = np.asarray(meanP, dtype=float)
-    meanP = np.clip(meanP, eps, 1.0)
-    meanP = meanP / np.maximum(meanP.sum(), eps)
-
-    M = np.broadcast_to(meanP[None, :], P.shape)
-    return kl(P, M, eps=eps)
-
+def entropy_vec(pi, eps=1e-12):
+    # pi shape: (..., K) or (K,)
+    pi = np.clip(pi, eps, 1.0)
+    pi = pi / np.sum(pi, axis=-1, keepdims=True)
+    return -np.sum(pi * np.log(pi), axis=-1)
 
 # Jensen-Shannon divergence
-def js_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    """
-        Row-wise JS(P_i, meanP). Returns shape (n,).
-        JS(P, M) = 0.5*KL(P || H) + 0.5*KL(M || H), H = 0.5*(P+M)
-    """
-    P = safe_normalize_probs(P, eps=eps)
-    meanP = np.asarray(meanP, dtype=float)
-    meanP = np.clip(meanP, eps, 1.0)
-    meanP = meanP / np.maximum(meanP.sum(), eps)
-
-    # broadcast meanP to (n, K)
-    M = np.broadcast_to(meanP[None, :], P.shape)
-
-    H = 0.5 * (P + M)
-    # KL per row
-    js = 0.5 * kl(P, H, eps=eps) + 0.5 * kl(M, H, eps=eps)
-    
-    return js
+def js_divergence(P, Q, eps=1e-12):
+    # JS(P,Q) per-sample (symmetric, bounded)
+    P = safe_normalize_probs(P, eps)
+    Q = safe_normalize_probs(Q, eps)
+    M = 0.5 * (P + Q)
+    return 0.5 * kl_divergence(P, M, eps) + 0.5 * kl_divergence(Q, M, eps)
 
 # Hellinger distance
 def hellinger2_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
