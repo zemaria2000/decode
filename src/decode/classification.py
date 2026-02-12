@@ -73,6 +73,7 @@ class ClassificationTree(BaseTree):
         min_bin: int = 10,
         score_mult: float = 1.0,
         support: str = "log",      # "none" | "log" | "sqrt"
+        alpha: float = 0.5
     ):
         """
             Refine bins whose within-bin impurity (using the same criterium as the tree) is high relative to the median.
@@ -99,7 +100,7 @@ class ClassificationTree(BaseTree):
 
             # Computing the impurity score of the current bin
             pb = preds[mask] 
-            score = float(self._impurity_calculation(pb, criterium))
+            score = float(self._impurity_calculation(pb, criterium, alpha = alpha))
 
             # Optional support factor to avoid over-refining tiny bins
             if support == "log":
@@ -123,9 +124,8 @@ class ClassificationTree(BaseTree):
         
         return refine_bins.tolist()   
 
-    def _impurity_calculation(self, preds: np.ndarray, criterium,
-                            eps: float = 1e-12,
-                            alpha: float = 0.5) -> float:
+    def _impurity_calculation(self, preds: np.ndarray, criterium, alpha: float = 0.5,
+                            eps: float = 1e-12) -> float:
         """
             Computing the impurity of a node based on the selected criterium
             Args:
@@ -250,7 +250,8 @@ class ClassificationTree(BaseTree):
                      n_steps: Union[str, int], 
                      adaptive: bool, 
                      criterium: str, 
-                     left: bool):
+                     left: bool,
+                     alpha: float = 0.5):
         """
             Creating a new node based on the previous
             Args:  
@@ -293,8 +294,8 @@ class ClassificationTree(BaseTree):
             # Seeing if we already have a perfect class distribution
         else:
             # Conduct the optimisation process for the rule
-            step_info = self._create_auto_steps(dataset_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium)
-            final_res = self.execute_trial(dataset_idx, step_info, criterium = criterium)
+            step_info = self._create_auto_steps(dataset_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, alpha = alpha)
+            final_res = self.execute_trial(dataset_idx, step_info, criterium = criterium, alpha = alpha)
             # In case no target rule was found
             if final_res is None:
                 logger.warning(f"No acceptable candidate split was found for node {len(self.FEATURE)}. Marking it as a leaf node")

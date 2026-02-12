@@ -300,7 +300,8 @@ class BaseTree(ABC):
                             adaptive: bool = False,
                             refine_factor: int = 2,
                             n_refine: int = 2,
-                            criterium: str = 'brier'
+                            criterium: str = 'brier',
+                            alpha: float = 0.5
                             ):
         """
             Generates discretization steps per feature.
@@ -391,7 +392,8 @@ class BaseTree(ABC):
                         bin_idx = bin_idx,
                         edges = edges,
                         min_bin = min_bin,
-                        criterium = criterium
+                        criterium = criterium,
+                        alpha = alpha
                     )
 
                     if len(refine_bins) == 0:
@@ -438,11 +440,11 @@ class BaseTree(ABC):
     ##################################################################
 
     @abstractmethod
-    def _impurity_calculation(self, preds: np.ndarray, criterium: str = 'default'):
+    def _impurity_calculation(self, preds: np.ndarray, alpha: float, criterium: str = 'default'):
         """ Impurity calculation handled by the subclass """
         pass
 
-    def _candidate_score(self, dataset_idx: np.ndarray, feature_idx: int, feature_values: np.ndarray, criterium: str = 'default'):
+    def _candidate_score(self, dataset_idx: np.ndarray, feature_idx: int, feature_values: np.ndarray, criterium: str = 'default', alpha: float = 0.5):
         """
             Auxiliary function that automatically calculates the candidate score for a particular split of the dataset
             Args:
@@ -477,9 +479,9 @@ class BaseTree(ABC):
             return np.full(len(feature_values), np.nan)
         
         # Impurity calculations
-        original_impurity = self._impurity_calculation(preds, criterium)
-        left_impurities = np.array([self._impurity_calculation(preds[mask], criterium) for mask in masks[valid_mask]])
-        right_impurities = np.array([self._impurity_calculation(preds[~mask], criterium) for mask in masks[valid_mask]])
+        original_impurity = self._impurity_calculation(preds, criterium, alpha)
+        left_impurities = np.array([self._impurity_calculation(preds[mask], criterium, alpha) for mask in masks[valid_mask]])
+        right_impurities = np.array([self._impurity_calculation(preds[~mask], criterium, alpha) for mask in masks[valid_mask]])
         
         # Candidate scores
         candidate_scores = original_impurity - ((n_left_samples[valid_mask]/n_samples)*left_impurities + (n_right_samples[valid_mask]/n_samples)*right_impurities)
@@ -494,7 +496,7 @@ class BaseTree(ABC):
 
         return scores 
 
-    def execute_trial(self, dataset_idx: np.ndarray, step_info: dict, criterium: str = 'default'):
+    def execute_trial(self, dataset_idx: np.ndarray, step_info: dict, criterium: str = 'default', alpha: float = 0.5):
         """
             Executes a new trial for each feature and its steps, based on the providade dataset
             Args:
@@ -511,7 +513,8 @@ class BaseTree(ABC):
             candidate_scores = self._candidate_score(dataset_idx = dataset_idx, 
                                                      feature_idx = feature_idx, 
                                                      feature_values = feature_values, 
-                                                     criterium = criterium)
+                                                     criterium = criterium,
+                                                     alpha = alpha)
             scores_aux = np.concatenate((np.repeat(feature_idx, len(feature_values))[:, None], feature_values[:, None], candidate_scores[:, None]), axis = 1)
             score_list = np.concatenate((score_list, scores_aux), axis = 0) if score_list is not None else scores_aux
         
@@ -536,7 +539,7 @@ class BaseTree(ABC):
         pass
 
     @abstractmethod
-    def _expand_node(self, prev_node_idx: int, current_depth: int, dataset: np.ndarray, imp_threshold: float, n_steps: Union[str, int], adaptive: bool, criterium: str, perturb_dataset: bool, left: bool):
+    def _expand_node(self, prev_node_idx: int, current_depth: int, dataset: np.ndarray, imp_threshold: float, n_steps: Union[str, int], adaptive: bool, criterium: str, perturb_dataset: bool, left: bool, alpha: float = 0.5):
         """ Function handled by the subclass - expanding a particular node """
 
     def _compute_class_weights(self, class_weights: Union[str, dict] = None):
@@ -565,7 +568,8 @@ class BaseTree(ABC):
             min_samples_split: int = 2,
             min_impurity_decrease: float = 0.0,
             criterium: str = 'default',
-            class_weights: Union[None, str, dict] = None):
+            class_weights: Union[None, str, dict] = None,
+            alpha: float = 0.5):
         """
             Generates the decision tree based on the provided dataset and model
             Args:
@@ -580,7 +584,7 @@ class BaseTree(ABC):
         """
 
         logger.info(f"Starting the tree generation process")
-        logger.debug(f"Parameters: max_depth={max_depth}, imp_threshold={imp_threshold}, n_steps={n_steps}, adaptive = {adaptive}, min_samples_split={min_samples_split}, min_impurity_decrease={min_impurity_decrease}, criterium={criterium}")
+        logger.debug(f"Parameters: max_depth={max_depth}, imp_threshold={imp_threshold}, n_steps={n_steps}, adaptive = {adaptive}, min_samples_split={min_samples_split}, min_impurity_decrease={min_impurity_decrease}, criterium={criterium}, alpha={alpha}")
 
         # Just some sanity checking regarding the adaptive steps
         if adaptive and criterium in ['gini', 'log_loss']:
@@ -601,8 +605,8 @@ class BaseTree(ABC):
 
         ### 1. INITIAL NODE TRIAL
         original_idx = np.arange(len(self.decode_dataset))
-        step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium)
-        final_res = self.execute_trial(original_idx, step_info, criterium)
+        step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, alpha = alpha)
+        final_res = self.execute_trial(original_idx, step_info, criterium, alpha = alpha)
         if final_res is None:
             raise RuntimeError("No valid split found for root node. Try reducing constraints.")    
         # Storing the root info
@@ -632,11 +636,11 @@ class BaseTree(ABC):
                 
                 ## 2.2. PROCESS LEFT NODE
                 if len(left_ds_idx) > 0:
-                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = left_ds_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = True)
+                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = left_ds_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = True, alpha = alpha)
 
                 ## 2.3. PROCESS RIGHT NODE
                 if len(right_ds_idx) > 0:
-                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = right_ds_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = False)
+                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = right_ds_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = False, alpha = alpha)
 
         logger.info(f"Tree building process completed: total nodes = {len(self.N_NODE_SAMPLES)}, leaf nodes = {np.sum(self.LEAF)}")
 
