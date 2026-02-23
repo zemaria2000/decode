@@ -4,7 +4,6 @@
 
 import numpy as np
 import pickle
-from keras import Model as KerasModel
 
 ########################################################
 ################ METRICS FOR REGRESSION ################
