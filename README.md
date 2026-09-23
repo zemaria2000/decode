@@ -34,3 +34,7 @@ source venv/bin/activate
 python -m pip install --upgrade pip
 pip install .
 ```
+
+## Original paper
+
+DECODE is part of my Ph.D. work, and its core idea and principle can be analysed in its [original paper](https://ieeexplore.ieee.org/document/11659693)
