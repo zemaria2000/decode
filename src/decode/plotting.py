@@ -21,10 +21,10 @@ plt.rcParams['axes.linewidth'] = 1.0
 
 # Use LaTeX for rendering text
 plt.rcParams['text.usetex'] = True
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = 'CMU'
 # plt.rcParams['font.family'] = 'sans-serif'
-# plt.rcParams['font.sans-serif'] = 'CMU'
-plt.rcParams['font.family'] = 'serif'
-plt.rcParams['font.serif'] = 'CMU'
+# plt.rcParams['font.serif'] = 'CMU'
 plt.rcParams['text.latex.preamble'] = r'\usepackage{amsmath}'
 
 
@@ -128,6 +128,8 @@ def plot_classification_tree(tree, level_spacing: int = 5, hor_spacing: int = 3,
         r,g,b = to_rgb(class_colors[tree.CLASS[i] % len(class_colors)])
         f = tree.IMPURITY[i]
         blended = (f + (1-f)*r, f + (1-f)*g, f + (1-f)*b)
+        # Ensuring the color blended has all values between 0 and 1
+        blended = tuple(min(max(c, 0.0), 1.0) for c in blended)
         face_colors.append(blended)
         text_colors.append("white" if _is_dark_color(blended) else "black")
 

@@ -23,6 +23,7 @@ class BaseTree(ABC):
                  model, 
                  dataset: np.ndarray, 
                  targets: np.ndarray = None, 
+                 target_probs: np.ndarray = None,
                  scalerX = None, 
                  scalerY = None, 
                  feature_names: list = None, 
@@ -30,19 +31,19 @@ class BaseTree(ABC):
                  feature_types: list = None,
                  seed: int = 42, 
                  root_path: str = None, 
-                 use_logging: bool = True):
+                 use_logging: bool = True,
+                 log_level = logging.INFO):
         """
             Args:
                 - model: model instance for the classifier/regressor
                 - scalerX: scaler for the inputs
                 - scalerY: scaler for the outputs (only relevant for regression problems)
                 - dataset (np.ndarray): input dataset with features - not-normalised
-                - targets (np.ndarray): output dataset with targets - not-normalised - note that these should be the labels providade by the black-box model. If empty, the model will manually generate the predictions
+                - targets (np.ndarray): output dataset with targets - not-normalised - should be the predictions of the model for the input dataset
+                - target_probs (np.ndarray): output dataset with target probabilities - not-normalised - should be the probabilities of the model for the input dataset
                 - feature_names (list): list with all feature names for plotting purposes
                 - target_names (list): list with all target names for plotting purposes
                 - feature_types (list): list that defines numerical features - 'N' - and categorical features - 'C'. Categorical features will not be considered for normalisation
-                - use_synth_ds (bool): flag to enable or disable the synthetic dataset generation process
-                - synth_ds_info (dict): dictionary with information about the synthetic dataset generation process. If None, no synthetic dataset will be generated. It must contain info regarding (1) sampler to be used, (2) n_samples to be generated, and (3) strategy for the final dataset creation, and (4) sampler kwargs. More specific info in the 
                 - seed (int): seed for random number generation
                 - root_path (str): specific path to store results. If not given, it stores in the current working directory, inly when required
                 - logging (bool): flag to enable or disable logging
@@ -53,6 +54,7 @@ class BaseTree(ABC):
         self.scalerY = scalerY
         self.dataset = dataset
         self.targets = targets
+        self.target_probs = target_probs
         self.feature_names = feature_names
         self.target_names = target_names
         self.feature_types = feature_types
@@ -80,18 +82,21 @@ class BaseTree(ABC):
         self.numerical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'N']
         self.categorical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'C']
 
-        # Getting a normalised version of the dataset to be used for predictions
-        self.decode_normalised_dataset = self._scale_inputs(self.dataset)
-
+        # model predictions (hard-labels)
         if self.targets is None:
-            targets = self.model.predict(self.decode_normalised_dataset)
+            targets = self.model.predict(self.dataset)
             self.targets = self._postprocess_prediction(targets)
-        else:
-            self.targets = self._postprocess_prediction(self.targets)
-
         # Reshaping targets so that they have always 2 dimensions
         if len(self.targets.shape) == 1:
             self.targets = self.targets.reshape(-1, 1)
+
+        # model prediction probabilities (soft-labels)
+        if self.target_probs is None:
+            if hasattr(self.model, "predict_proba"):
+                self.target_probs = self.model.predict_proba(self.dataset)
+            else:
+                logger.warning("Model does not have predict_proba method. Using hard predictions instead.")
+                self.target_probs = self.targets
 
         # Resetting the tree
         self._reset_tree()
@@ -103,7 +108,7 @@ class BaseTree(ABC):
         self.flag_multi_output = True if self.targets.shape[1] > 1 else False
 
         if use_logging:
-            logger.setLevel(logging.DEBUG)
+            logger.setLevel(log_level)
         else:
             logger.info("User disabled logging for the tree")
             logger.setLevel(logging.CRITICAL)
@@ -240,82 +245,144 @@ class BaseTree(ABC):
         """ Subclass decides which bins to refine """
         pass
 
-    def _create_auto_steps(self, dataset_idx: np.ndarray, n_steps: Union[str, int] = None, adaptive: bool = False, refine_factor: int = 2, n_refine: int = 2):
+    def _create_auto_steps(self,
+                            dataset_idx: np.ndarray,
+                            n_steps: Union[str, int] = None,
+                            adaptive: bool = False,
+                            refine_factor: int = 2,
+                            n_refine: int = 2,
+                            criterium: str = 'brier',
+                            alpha: float = 0.5
+                            ):
         """
-            Generates the steps automatically, leveraging the numpy.histogram function to create optimal bins for each feature. Additionally, it contemplates the possibility to create adaptive quantile-based steps. Depending on the method that is deployed in the Regressor/Classifier classes, the refinement will be conducted accordingly
+            Generates discretization steps per feature.
+            - Numeric features:
+                * non-adaptive: histogram 'auto' bins or quantile bins
+                * adaptive: iteratively refines bins with high within-bin impurity, using model soft predictions
+            - Categorical features:
+                * uses midpoints between sorted unique integer-coded categories
             Args:
-                - dataset_idx (np.ndarray): indices, relative to the original dataset, that should be taken into account to conduct the variable discretization
-                - n_steps (str): Whether to automatically create the steps for each feature or to use a fixed number of steps for the quantiles
-                - adaptive (bool): Whether to create adaptive quantile-based steps
-                - refine_factor (int): Number of new bins to create from a candidate split
-                - n_refine (int): number of possible refinement iterations
-            Returns:
-                - step_info (dict): Dictionary with the feature names as keys and their min, max and steps as values
+                - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
+                - n_steps (str/int): 'auto' or int number of initial steps for numeric features
+                - adaptive (bool): whether to use adaptive bin refinement for numeric features
+                - refine_factor (int): factor by which to refine each selected bin
+                - n_refine (int): number of refinement iterations
+                - criterium (str): criterium used to score bins for refinement
+                
+            Returns
+                - step_info : dict
+                    step_info[feature] = {'min','max','median','steps'} for numeric
+                    step_info[feature] = {'steps'} for categorical
         """
         step_info = {}
-        for i, feature in enumerate(self.feature_names):
-            feature_data = self.dataset[dataset_idx, i]
-            # In case we are dealing with a numerical feature
-            if self.feature_types[i] == 'N':            
-                step_info[feature] = {
-                    'min': np.min(feature_data),
-                    'max': np.max(feature_data),
-                    'median': np.median(feature_data)
-                }
-                if not adaptive:
-                    # Creating an array with the steps
-                    if isinstance(n_steps, str) or n_steps is None:
-                        _, bin_edges = np.histogram(feature_data, bins = 'auto')
-                        step_info[feature]['steps'] = bin_edges[1:-1]   # First value is the minimum, last value is the maximum - they generate degenerate splits
-                    elif isinstance(n_steps, int):
-                        quantiles = np.linspace(0, 1, n_steps + 1)
-                        steps = np.unique(np.quantile(feature_data, quantiles))
-                        # Creating an array with n-steps between min and max
-                        step_info[feature]['steps'] = steps[1:-1]       # First value is the minimum, last value is the maximum - they generate degenerate splits
-                
-                else:   # We will create adaptive quantile-based steps
-                    
-                    # Creating an array with the initial steps
-                    if isinstance(n_steps, str) or n_steps is None:
-                        _, edges = np.histogram(feature_data, bins = 'auto')
-                        edges = edges[1:-1]
-                    elif isinstance(n_steps, int):
-                        quantiles = np.linspace(0, 1, n_steps + 1)
-                        edges = np.unique(np.quantile(feature_data, quantiles))
-                        edges = edges[1:-1]
 
-                    # Make predictions with the model
-                    preds = self.targets[dataset_idx]      
-                    
-                    # Iterate to find possible refinment of bins
-                    for _ in range(n_refine):
-                        bin_idx = np.digitize(feature_data, edges, right=True)
-                        # Getting the bins to refine based on the tree class
-                        refine_bins = self._refine_step_bins(feature_data, preds, bin_idx, edges)
-                        if len(refine_bins) == 0:
-                            break   # No more bins to refine
-                        new_edges = list(edges)
-                        for b in refine_bins:
-                            # re-split the bin locally
-                            lo = -np.inf if b == 0 else edges[b-1]
-                            hi =  np.inf if b == len(edges) else edges[b]
-                            mask = (feature_data > lo) & (feature_data <= hi)
-                            if np.sum(mask) < 2:  # skip tiny bins
-                                continue
-                            sub_qs = np.linspace(0, 1, refine_factor + 1)
-                            sub_edges = np.quantile(feature_data[mask], sub_qs)[1:-1]
-                            new_edges.extend(sub_edges)
-                        
-                        edges = np.unique(np.sort(new_edges))
-                    
-                    step_info[feature]['steps'] = edges
+        for j, feature in enumerate(self.feature_names):
+            x = self.dataset[dataset_idx, j]
+
+            # HANDLING NUMERICAL FEATURES
+            if self.feature_types[j] == "N":
+                
+                # Filter invalid values (keeps alignment with preds if adaptive)
+                finite_mask = np.isfinite(x)
+                x_f = x[finite_mask]
+
+                # Basic stats (handle empty/constant cases)
+                if x_f.size == 0:
+                    step_info[feature] = {"min": np.nan, "max": np.nan, "median": np.nan, "steps": np.array([])}
+                    continue
+
+                # min, max, and median values
+                x_min = float(np.min(x_f))
+                x_max = float(np.max(x_f))
+                x_med = float(np.median(x_f))
+                step_info[feature] = {"min": x_min, "max": x_max, "median": x_med}
+
+                # Constant feature => no thresholds
+                if not np.isfinite(x_min) or not np.isfinite(x_max) or x_min == x_max:
+                    step_info[feature]["steps"] = np.array([])
+                    continue
+
+                # Generating the initial edges for feature binning
+                if isinstance(n_steps, int):
+                    # Quantile-based initial edges
+                    qs = np.linspace(0.0, 1.0, n_steps + 1)
+                    edges = np.unique(np.quantile(x_f, qs))[1:-1]
+                else:
+                    # Histogram auto bins by default
+                    _, bin_edges = np.histogram(x_f, bins = "auto")
+                    edges = bin_edges[1:-1]
+
+                # Reassuring that edges are larger than min and lower than max
+                edges = np.unique(np.sort(edges))
+                edges = edges[(edges > x_min) & (edges < x_max)]
+
+                # Non-adaptive case: just store edges
+                if not adaptive:
+                    step_info[feature]["steps"] = edges
+                    continue
+
+                # ADAPTIVE CASE: iteratively refine bins with high impurity
+                preds_all = self.target_probs[dataset_idx]
+                preds_f = preds_all[finite_mask]
+
+                # If no valid edges, nothing to refine (but keep empty)
+                if edges.size == 0:
+                    step_info[feature]["steps"] = edges
+                    continue
+
+                # Minimum number of samples per bin to consider for refinement
+                min_bin = max(2, getattr(self, "min_samples_split", 2))
+
+                for _ in range(n_refine):
+                    # Assign each sample to a current bin
+                    bin_idx = np.digitize(x_f, edges, right = True)
+
+                    # Score bins and choose which to refine
+                    refine_bins = self._refine_step_bins(
+                        preds = preds_f,          
+                        bin_idx = bin_idx,
+                        edges = edges,
+                        min_bin = min_bin,
+                        criterium = criterium,
+                        alpha = alpha
+                    )
+
+                    if len(refine_bins) == 0:
+                        break
+
+                    new_edges = edges.tolist()
+
+                    for b in refine_bins:
+                        # Refine exactly this bin (avoid boundary logic bugs)
+                        mask_b = (bin_idx == b)
+                        if int(np.sum(mask_b)) < 2:
+                            continue
+
+                        # Split this bin locally using quantiles
+                        sub_qs = np.linspace(0.0, 1.0, refine_factor + 1)
+                        sub_edges = np.quantile(x_f[mask_b], sub_qs)[1:-1]
+                        new_edges.extend(sub_edges.tolist())
+
+                    # Update edges: unique, sorted, inside (min,max)
+                    edges = np.unique(np.sort(np.array(new_edges, dtype=float)))
+                    edges = edges[(edges > x_min) & (edges < x_max)]
+
+                    # If refinement adds nothing new, stop
+                    if edges.size == 0:
+                        break
+
+                step_info[feature]["steps"] = edges
+
 
             # In case we are dealing with a categorical feature
-            elif self.feature_types[i] == 'C':
-                unique_vals = np.unique(feature_data).astype(int)
+            elif self.feature_types[j] == 'C':
+                unique_vals = np.unique(x).astype(int)
                 step_info[feature] = {}
                 step_info[feature]['steps'] = (unique_vals[:-1] + unique_vals[1:]) / 2
-        
+
+            else:
+                raise ValueError(f"Unknown feature type '{self.feature_types[j]}' for feature '{feature}'")
+
         return step_info
 
 
@@ -324,11 +391,11 @@ class BaseTree(ABC):
     ##################################################################
 
     @abstractmethod
-    def _impurity_calculation(self, preds: np.ndarray, criterium: str = 'default'):
+    def _impurity_calculation(self, preds: np.ndarray, alpha: float, criterium: str = 'default'):
         """ Impurity calculation handled by the subclass """
         pass
 
-    def _candidate_score(self, dataset_idx: np.ndarray, preds: np.ndarray, feature_idx: int, feature_values: np.ndarray, criterium: str = 'default'):
+    def _candidate_score(self, dataset_idx: np.ndarray, feature_idx: int, feature_values: np.ndarray, criterium: str = 'default', alpha: float = 0.5):
         """
             Auxiliary function that automatically calculates the candidate score for a particular split of the dataset
             Args:
@@ -343,6 +410,10 @@ class BaseTree(ABC):
         """
         # Current dataset
         current_ds = self.dataset[dataset_idx]
+
+        # Current preds
+        # preds = self.targets[dataset_idx] if criterium in ['gini', 'log_loss'] else self.target_probs[dataset_idx]
+        preds = self.target_probs[dataset_idx]
 
         # Conduct all splits
         n_samples = current_ds.shape[0]
@@ -359,16 +430,16 @@ class BaseTree(ABC):
             return np.full(len(feature_values), np.nan)
         
         # Impurity calculations
-        original_impurity = self._impurity_calculation(preds, criterium)
-        left_impurities = np.array([self._impurity_calculation(preds[mask], criterium) for mask in masks[valid_mask]])
-        right_impurities = np.array([self._impurity_calculation(preds[~mask], criterium) for mask in masks[valid_mask]])
+        original_impurity = self._impurity_calculation(preds, criterium, alpha)
+        left_impurities = np.array([self._impurity_calculation(preds[mask], criterium, alpha) for mask in masks[valid_mask]])
+        right_impurities = np.array([self._impurity_calculation(preds[~mask], criterium, alpha) for mask in masks[valid_mask]])
         
         # Candidate scores
         candidate_scores = original_impurity - ((n_left_samples[valid_mask]/n_samples)*left_impurities + (n_right_samples[valid_mask]/n_samples)*right_impurities)
 
         # Global impurity decreases + checking their compliance with the min_impurity_decrease criterium
         global_impurity_decreases = (n_samples/len(self.dataset))*candidate_scores
-        candidate_scores[global_impurity_decreases < self.min_impurity_decrease] = np.nan
+        candidate_scores[global_impurity_decreases <= self.min_impurity_decrease] = np.nan
 
         # Returning the scores for all possible feature values
         scores = np.full(len(feature_values), np.nan)
@@ -376,12 +447,11 @@ class BaseTree(ABC):
 
         return scores 
 
-    def execute_trial(self, dataset_idx: np.ndarray, preds: np.ndarray, step_info: dict, criterium: str = 'default'):
+    def execute_trial(self, dataset_idx: np.ndarray, step_info: dict, criterium: str = 'default', alpha: float = 0.5):
         """
             Executes a new trial for each feature and its steps, based on the providade dataset
             Args:
                 - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
-                - preds (np.ndarray): predictions for the current dataset (self.model.predict(self.decode_normalised_dataset[dataset_idx]))
                 - step_info (dict): dictionary with the feature steps information
                 - criterium (str): str that defines the choosing criterium - "default" by default 
             Returns:
@@ -391,7 +461,11 @@ class BaseTree(ABC):
 
         for feature_idx, feature in enumerate(self.feature_names):
             feature_values = np.array(step_info[feature]['steps'])
-            candidate_scores = self._candidate_score(dataset_idx = dataset_idx, preds = preds, feature_idx = feature_idx, feature_values = feature_values, criterium = criterium)
+            candidate_scores = self._candidate_score(dataset_idx = dataset_idx, 
+                                                     feature_idx = feature_idx, 
+                                                     feature_values = feature_values, 
+                                                     criterium = criterium,
+                                                     alpha = alpha)
             scores_aux = np.concatenate((np.repeat(feature_idx, len(feature_values))[:, None], feature_values[:, None], candidate_scores[:, None]), axis = 1)
             score_list = np.concatenate((score_list, scores_aux), axis = 0) if score_list is not None else scores_aux
         
@@ -416,7 +490,7 @@ class BaseTree(ABC):
         pass
 
     @abstractmethod
-    def _expand_node(self, prev_node_idx: int, current_depth: int, dataset: np.ndarray, imp_threshold: float, n_steps: Union[str, int], adaptive: bool, criterium: str, perturb_dataset: bool, left: bool):
+    def _expand_node(self, prev_node_idx: int, current_depth: int, dataset: np.ndarray, imp_threshold: float, n_steps: Union[str, int], adaptive: bool, criterium: str, perturb_dataset: bool, left: bool, alpha: float = 0.5):
         """ Function handled by the subclass - expanding a particular node """
 
     def _compute_class_weights(self, class_weights: Union[str, dict] = None):
@@ -430,6 +504,7 @@ class BaseTree(ABC):
             n_samples, n_classes = len(self.targets), len(np.unique(self.targets))
             class_counts = np.bincount(self.targets.flatten().astype(int))
             self.class_weights = {i: n_samples/(n_classes*class_counts[i]) for i in range(n_classes)}
+            self.class_weights = np.array([self.class_weights[i] for i in range(n_classes)])
         elif isinstance(class_weights, dict):
             self.class_weights = class_weights
         else:
@@ -437,14 +512,15 @@ class BaseTree(ABC):
 
 
     def fit(self, 
-                   max_depth: int = 5,
-                   imp_threshold: float = 0.0,
-                   n_steps: Union[str, int] = 'auto',
-                   adaptive: bool = False,
-                   min_samples_split: int = 2,
-                   min_impurity_decrease: float = 0.0,
-                   criterium: str = 'default',
-                   class_weights: Union[None, str, dict] = None):
+            max_depth: int = 5,
+            imp_threshold: float = 0.0,
+            n_steps: Union[str, int] = 'auto',
+            adaptive: bool = False,
+            min_samples_split: int = 2,
+            min_impurity_decrease: float = 0.0,
+            criterium: str = 'default',
+            class_weights: Union[None, str, dict] = None,
+            alpha: float = 0.5):
         """
             Generates the decision tree based on the provided dataset and model
             Args:
@@ -459,8 +535,13 @@ class BaseTree(ABC):
         """
 
         logger.info(f"Starting the tree generation process")
-        logger.debug(f"Parameters: max_depth={max_depth}, imp_threshold={imp_threshold}, n_steps={n_steps}, adaptive = {adaptive}, min_samples_split={min_samples_split}, min_impurity_decrease={min_impurity_decrease}, criterium={criterium}")
+        logger.debug(f"Parameters: max_depth={max_depth}, imp_threshold={imp_threshold}, n_steps={n_steps}, adaptive = {adaptive}, min_samples_split={min_samples_split}, min_impurity_decrease={min_impurity_decrease}, criterium={criterium}, alpha={alpha}")
 
+        # Just some sanity checking regarding the adaptive steps
+        if adaptive and criterium in ['gini', 'log_loss']:
+            logger.warning("Adaptive step generation is not compatible with 'gini' or 'log_loss' criteria. Disabling adaptive step generation.")
+            adaptive = False
+        
         # Instantiating by storing the stopping criteria
         self.min_samples_split = min_samples_split
         self.min_impurity_decrease = min_impurity_decrease
@@ -475,13 +556,12 @@ class BaseTree(ABC):
 
         ### 1. INITIAL NODE TRIAL
         original_idx = np.arange(len(self.dataset))
-        original_preds = self.targets     
-        step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive)
-        final_res = self.execute_trial(original_idx, original_preds, step_info, criterium = criterium)
+        step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, alpha = alpha)
+        final_res = self.execute_trial(original_idx, step_info, criterium, alpha = alpha)
         if final_res is None:
             raise RuntimeError("No valid split found for root node. Try reducing constraints.")    
         # Storing the root info
-        self._initialise_root_node(final_res, original_preds)
+        self._initialise_root_node(final_res, criterium)
         logger.info(f"Root node created. Rule is {self.feature_names[self.FEATURE[0]]} <= {self.VALUE[0]}")
         logger.debug(f"Root node impurity = {self.IMPURITY[0]}")
 
@@ -504,16 +584,14 @@ class BaseTree(ABC):
                 left_mask = current_ds[:, self.FEATURE[prev_node_index]] <= self.VALUE[prev_node_index]
                 left_ds_idx = self.NODE_DS[prev_node_index][left_mask]
                 right_ds_idx = self.NODE_DS[prev_node_index][~left_mask]
-                left_preds = self.targets[left_ds_idx]
-                right_preds = self.targets[right_ds_idx]
                 
                 ## 2.2. PROCESS LEFT NODE
                 if len(left_ds_idx) > 0:
-                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = left_ds_idx, preds = left_preds, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = True)
+                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = left_ds_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = True, alpha = alpha)
 
                 ## 2.3. PROCESS RIGHT NODE
                 if len(right_ds_idx) > 0:
-                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = right_ds_idx, preds = right_preds, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = False)
+                    self._expand_node(prev_node_idx = prev_node_index, current_depth = i, dataset_idx = right_ds_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, left = False, alpha = alpha)
 
         logger.info(f"Tree building process completed: total nodes = {len(self.N_NODE_SAMPLES)}, leaf nodes = {np.sum(self.LEAF)}")
 
@@ -715,6 +793,14 @@ class BaseTree(ABC):
         for idx in target_idx:
             new_node_ds.append(pruned_tree.NODE_DS[idx])
         pruned_tree.NODE_DS = new_node_ds
+
+        # NOTE: This is still not perfect, and only adapted to depth pruning:
+        final_depth_nodes = np.where(np.array(pruned_tree.DEPTH) == np.max(pruned_tree.DEPTH))[0]
+        for node in final_depth_nodes:
+            if pruned_tree.LEAF[node] == 0:
+                pruned_tree.LEAF[node] = 1   # Turning into leaf nodes
+                pruned_tree.FEATURE[node] = None
+                pruned_tree.VALUE[node] = None
 
         return pruned_tree
 
