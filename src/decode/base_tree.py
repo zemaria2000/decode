@@ -24,6 +24,7 @@ class BaseTree(ABC):
                  model, 
                  dataset: np.ndarray, 
                  targets: np.ndarray, 
+                 model_preds: np.ndarray = None,
                  scalerX = None, 
                  scalerY = None, 
                  feature_names: list = None, 
@@ -41,6 +42,7 @@ class BaseTree(ABC):
                 - scalerY: scaler for the outputs (only relevant for regression problems)
                 - dataset (np.ndarray): input dataset with features - not-normalised
                 - targets (np.ndarray): output dataset with targets - not-normalised
+                - model_preds (np.ndarray): predictions from the model
                 - feature_names (list): list with all feature names for plotting purposes
                 - target_names (list): list with all target names for plotting purposes
                 - feature_types (list): list that defines numerical features - 'N' - and categorical features - 'C'. Categorical features will not be considered for normalisation
@@ -56,6 +58,7 @@ class BaseTree(ABC):
         self.scalerY = scalerY
         self.dataset = dataset
         self.targets = targets
+        self.model_preds = model_preds
         self.feature_names = feature_names
         self.target_names = target_names
         self.feature_types = feature_types
@@ -101,8 +104,9 @@ class BaseTree(ABC):
             self._generate_synthetic_dataset(sampler = sampler, n_samples = n_samples, strategy = strategy, **sampler_kwargs)
 
         # Conducting the predictions with the model
-        model_preds = self.model.predict(self.decode_normalised_dataset)
-        self.model_preds = self._postprocess_prediction(model_preds) 
+        if self.model_preds is None:
+            model_preds = self.model.predict(self.decode_normalised_dataset)
+            self.model_preds = self._postprocess_prediction(model_preds) 
 
         # Resetting the tree
         self._reset_tree()
