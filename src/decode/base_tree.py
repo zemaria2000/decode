@@ -5,7 +5,6 @@
 import numpy as np
 from pathlib import Path
 from .utils import *
-from .tools import *
 from abc import ABC, abstractmethod
 from typing import Union
 from .logger import logger
@@ -54,7 +53,6 @@ class BaseTree(ABC):
         self.scalerY = scalerY
         self.dataset = dataset
         self.targets = targets
-        self.model_preds = model_preds
         self.feature_names = feature_names
         self.target_names = target_names
         self.feature_types = feature_types
@@ -82,10 +80,6 @@ class BaseTree(ABC):
         self.numerical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'N']
         self.categorical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'C']
 
-        # Reshaping targets so that they have always 2 dimensions
-        if len(self.targets.shape) == 1:
-            self.targets = self.targets.reshape(-1, 1)
-
         # Getting a normalised version of the dataset to be used for predictions
         self.decode_normalised_dataset = self._scale_inputs(self.dataset)
 
@@ -94,6 +88,10 @@ class BaseTree(ABC):
             self.targets = self._postprocess_prediction(targets)
         else:
             self.targets = self._postprocess_prediction(self.targets)
+
+        # Reshaping targets so that they have always 2 dimensions
+        if len(self.targets.shape) == 1:
+            self.targets = self.targets.reshape(-1, 1)
 
         # Resetting the tree
         self._reset_tree()
@@ -287,7 +285,7 @@ class BaseTree(ABC):
                         edges = edges[1:-1]
 
                     # Make predictions with the model
-                    preds = self.model_preds[dataset_idx]      
+                    preds = self.targets[dataset_idx]      
                     
                     # Iterate to find possible refinment of bins
                     for _ in range(n_refine):
@@ -477,7 +475,7 @@ class BaseTree(ABC):
 
         ### 1. INITIAL NODE TRIAL
         original_idx = np.arange(len(self.dataset))
-        original_preds = self.model_preds     
+        original_preds = self.targets     
         step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive)
         final_res = self.execute_trial(original_idx, original_preds, step_info, criterium = criterium)
         if final_res is None:
@@ -506,8 +504,8 @@ class BaseTree(ABC):
                 left_mask = current_ds[:, self.FEATURE[prev_node_index]] <= self.VALUE[prev_node_index]
                 left_ds_idx = self.NODE_DS[prev_node_index][left_mask]
                 right_ds_idx = self.NODE_DS[prev_node_index][~left_mask]
-                left_preds = self.model_preds[left_ds_idx]
-                right_preds = self.model_preds[right_ds_idx]
+                left_preds = self.targets[left_ds_idx]
+                right_preds = self.targets[right_ds_idx]
                 
                 ## 2.2. PROCESS LEFT NODE
                 if len(left_ds_idx) > 0:
