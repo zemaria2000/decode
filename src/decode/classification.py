@@ -224,7 +224,7 @@ class ClassificationTree(BaseTree):
                 - criterium (str): criterium for impurity calculation
         """
         # Auxiliary variable - class distribution for the original targets
-        target_dist = np.unique(self.decode_targets, return_counts = True)[1]
+        target_dist = np.unique(self.targets, return_counts = True)[1]
 
         ## Appending the necessary information
         self.N_NODE_SAMPLES.append(len(self.dataset))

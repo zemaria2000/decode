@@ -5,7 +5,6 @@
 import numpy as np
 from pathlib import Path
 from .utils import *
-from .tools import *
 from abc import ABC, abstractmethod
 from typing import Union
 from .logger import logger
@@ -69,7 +68,7 @@ class BaseTree(ABC):
         if self.dataset is None:
             raise KeyError("No input dataset has been provided")
         if self.targets is None:
-            raise KeyError("No output targets have been provided")
+            raise KeyError("No output targets have been provided. Predictions will be manaully conducted...")
         if self.target_names is None:
             logger.warning("No target names have been provided. Replaced by an ordered list of integers")
             self.target_names = [f'Target {i}' for i in range(len(np.unique(targets)))]
@@ -106,7 +105,7 @@ class BaseTree(ABC):
         self._storage_settings()
 
         # Internal flag that states if the tree is for multi-output or single_output regression
-        self.flag_multi_output = True if self.decode_targets.shape[1] > 1 else False
+        self.flag_multi_output = True if self.targets.shape[1] > 1 else False
 
         if use_logging:
             logger.setLevel(log_level)
@@ -115,8 +114,6 @@ class BaseTree(ABC):
             logger.setLevel(logging.CRITICAL)
 
         logger.info("Initialised tree object")
-
-
 
 
     #########################################################
@@ -504,8 +501,8 @@ class BaseTree(ABC):
         """
         if isinstance(class_weights, str) and class_weights == 'balanced':
             # Computing the class weights based on the dataset + pre-computed formula (based on sklearn's one)
-            n_samples, n_classes = len(self.decode_targets), len(np.unique(self.decode_targets))
-            class_counts = np.bincount(self.decode_targets.flatten().astype(int))
+            n_samples, n_classes = len(self.targets), len(np.unique(self.targets))
+            class_counts = np.bincount(self.targets.flatten().astype(int))
             self.class_weights = {i: n_samples/(n_classes*class_counts[i]) for i in range(n_classes)}
             self.class_weights = np.array([self.class_weights[i] for i in range(n_classes)])
         elif isinstance(class_weights, dict):
