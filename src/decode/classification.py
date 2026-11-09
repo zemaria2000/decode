@@ -227,7 +227,7 @@ class ClassificationTree(BaseTree):
         target_dist = np.unique(self.decode_targets, return_counts = True)[1]
 
         ## Appending the necessary information
-        self.N_NODE_SAMPLES.append(len(self.decode_dataset))
+        self.N_NODE_SAMPLES.append(len(self.dataset))
         # self.IMPURITY.append(self._impurity_calculation(self.target_preds if criterium in ['gini', 'log_loss'] else self.target_probs, criterium = criterium))
         self.IMPURITY.append(self._impurity_calculation(self.target_probs, criterium = 'gini'))
         self.VALUE.append(final_res[1])
@@ -238,7 +238,7 @@ class ClassificationTree(BaseTree):
         self.PARENT.append(-1)
         self.CLASS.append(np.argmax(target_dist))
         self.CLASS_DIST.append(target_dist)
-        self.NODE_DS.append(np.arange(len(self.decode_dataset)))    
+        self.NODE_DS.append(np.arange(len(self.dataset)))    
 
 
     def _expand_node(self, 
@@ -424,7 +424,7 @@ class ClassificationTree(BaseTree):
         VALUE = np.array(self.VALUE)
         LEFT = np.array(self.LEFT)
 
-        start_domain = np.concatenate((np.min(self.decode_dataset, axis = 0).reshape(1, -1), np.max(self.decode_dataset, axis = 0).reshape(1, -1)), axis = 0).T        
+        start_domain = np.concatenate((np.min(self.dataset, axis = 0).reshape(1, -1), np.max(self.dataset, axis = 0).reshape(1, -1)), axis = 0).T        
         all_rule_info = {}
 
         for i, path in enumerate(all_paths):
@@ -450,11 +450,11 @@ class ClassificationTree(BaseTree):
             info['limits'] = {}
             for j, feat in enumerate(used_variables):
                 info['domain'][self.feature_names[feat]] = np.round(used_variables_domain[j], 3)
-                info['limits'][self.feature_names[feat]] = np.array([np.round(np.min(self.decode_dataset[:, feat]), 3), np.round(np.max(self.decode_dataset[:, feat]), 3)])
+                info['limits'][self.feature_names[feat]] = np.array([np.round(np.min(self.dataset[:, feat]), 3), np.round(np.max(self.dataset[:, feat]), 3)])
 
             # STEP 3 - Extracting rule coverage information + output probability
             class_dist = self.CLASS_DIST[path[-1]]
-            rule_samples, total_samples = np.sum(class_dist), self.decode_dataset.shape[0]
+            rule_samples, total_samples = np.sum(class_dist), self.dataset.shape[0]
             info['coverage'] = np.round(rule_samples/total_samples, 3)
             info['output_probability'] = np.round(class_dist[np.argmax(class_dist)]/rule_samples, 3)
             info['target_class'] = self.target_names[self.CLASS[path[-1]]]

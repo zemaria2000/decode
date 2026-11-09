@@ -265,7 +265,7 @@ class BaseTree(ABC):
             - Categorical features:
                 * uses midpoints between sorted unique integer-coded categories
             Args:
-                - dataset_idx (np.ndarray): index, relative to the original dataset (self.decode_dataset), of our current dataset to be assessed
+                - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
                 - n_steps (str/int): 'auto' or int number of initial steps for numeric features
                 - adaptive (bool): whether to use adaptive bin refinement for numeric features
                 - refine_factor (int): factor by which to refine each selected bin
@@ -280,7 +280,7 @@ class BaseTree(ABC):
         step_info = {}
 
         for j, feature in enumerate(self.feature_names):
-            x = self.decode_dataset[dataset_idx, j]
+            x = self.dataset[dataset_idx, j]
 
             # HANDLING NUMERICAL FEATURES
             if self.feature_types[j] == "N":
@@ -402,7 +402,7 @@ class BaseTree(ABC):
         """
             Auxiliary function that automatically calculates the candidate score for a particular split of the dataset
             Args:
-                - dataset_idx (np.ndarray): index, relative to the original dataset (self.decode_dataset), of our current dataset to be assessed
+                - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
                 - preds (np.ndarray): predictions for our current dataset
                 - feature_idx (int): feature index of the target rule
                 - feature_values (np.ndarray): all possible values for the target rule
@@ -412,7 +412,7 @@ class BaseTree(ABC):
             See https://scikit-learn.org/stable/modules/tree.html#tree-mathematical-formulation for more details
         """
         # Current dataset
-        current_ds = self.decode_dataset[dataset_idx]
+        current_ds = self.dataset[dataset_idx]
 
         # Current preds
         # preds = self.targets[dataset_idx] if criterium in ['gini', 'log_loss'] else self.target_probs[dataset_idx]
@@ -441,7 +441,7 @@ class BaseTree(ABC):
         candidate_scores = original_impurity - ((n_left_samples[valid_mask]/n_samples)*left_impurities + (n_right_samples[valid_mask]/n_samples)*right_impurities)
 
         # Global impurity decreases + checking their compliance with the min_impurity_decrease criterium
-        global_impurity_decreases = (n_samples/len(self.decode_dataset))*candidate_scores
+        global_impurity_decreases = (n_samples/len(self.dataset))*candidate_scores
         candidate_scores[global_impurity_decreases <= self.min_impurity_decrease] = np.nan
 
         # Returning the scores for all possible feature values
@@ -454,7 +454,7 @@ class BaseTree(ABC):
         """
             Executes a new trial for each feature and its steps, based on the providade dataset
             Args:
-                - dataset_idx (np.ndarray): index, relative to the original dataset (self.decode_dataset), of our current dataset to be assessed
+                - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
                 - step_info (dict): dictionary with the feature steps information
                 - criterium (str): str that defines the choosing criterium - "default" by default 
             Returns:
@@ -558,7 +558,7 @@ class BaseTree(ABC):
         self._reset_tree()
 
         ### 1. INITIAL NODE TRIAL
-        original_idx = np.arange(len(self.decode_dataset))
+        original_idx = np.arange(len(self.dataset))
         step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive, criterium = criterium, alpha = alpha)
         final_res = self.execute_trial(original_idx, step_info, criterium, alpha = alpha)
         if final_res is None:
@@ -583,7 +583,7 @@ class BaseTree(ABC):
                     continue
 
                 ## 2.1. SELECT DATASET IDXS FOR THE NEXT NODE
-                current_ds = self.decode_dataset[self.NODE_DS[prev_node_index]]    
+                current_ds = self.dataset[self.NODE_DS[prev_node_index]]    
                 left_mask = current_ds[:, self.FEATURE[prev_node_index]] <= self.VALUE[prev_node_index]
                 left_ds_idx = self.NODE_DS[prev_node_index][left_mask]
                 right_ds_idx = self.NODE_DS[prev_node_index][~left_mask]
