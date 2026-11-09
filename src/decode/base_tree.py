@@ -237,47 +237,7 @@ class BaseTree(ABC):
             return self._postprocess_regression(y_raw)
 
         else:
-            raise ValueError("BaseTree.task not set")
-        
-
-    ###############################################################
-    ################# SYNTHETIC DATASET GENERATION ################
-    ###############################################################
-
-    def _generate_synthetic_dataset(self, sampler: str = None, n_samples: Union[str, int] = 'auto', strategy: str = None, **sampler_kwargs):
-
-        # Generating the synthetic dataset
-        if len(self.numerical_idx) == 0:   # Categorical dataset
-            x_synth, y_synth = generate_categorical_synthetic_dataset(self.dataset, self.model)
-            if x_synth.shape[0] > 1e6:
-                logging.warning("Generated synthetic dataset has more than 1 million samples. This may lead to memory issues. As such, we will be defaulting to the original dataset only")
-                self.decode_dataset = self.dataset
-                self.decode_targets = self.targets
-                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-            else:
-                self.decode_dataset = x_synth
-                self.decode_targets = y_synth.reshape(-1, 1)
-                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-        else:   # Continuous or mixed dataset
-            x_synth, y_synth = generate_continuous_synth_dataset(dataset = self.dataset, 
-                                                                    scaler = self.scalerX,
-                                                                    model = self.model,
-                                                                    numerical_idx = self.numerical_idx,
-                                                                    categorical_idx = self.categorical_idx,
-                                                                    sampler_name = sampler,
-                                                                    n_samples = n_samples,
-                                                                    seed = self.seed, 
-                                                                    **sampler_kwargs)
-            if strategy == 'synth':
-                self.decode_dataset = x_synth
-                self.decode_targets = y_synth.reshape(-1, 1)
-                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-            elif strategy == 'both':
-                self.decode_dataset = np.concatenate((self.dataset, x_synth), axis = 0)
-                self.decode_targets = np.concatenate((self.targets, y_synth.reshape(-1, 1)), axis = 0)
-                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-
-        
+            raise ValueError("BaseTree.task not set")        
 
     ###############################################################
     ################### VARIABLE DISCRETIZATION ###################
