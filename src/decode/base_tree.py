@@ -23,14 +23,13 @@ class BaseTree(ABC):
     def __init__(self, 
                  model, 
                  dataset: np.ndarray, 
-                 targets: np.ndarray, 
+                 targets: np.ndarray = None, 
+                 target_probs: np.ndarray = None,
                  scalerX = None, 
                  scalerY = None, 
                  feature_names: list = None, 
                  target_names: list = None, 
                  feature_types: list = None,
-                 use_synth_ds: bool = False,
-                 synth_ds_info: dict = None,
                  seed: int = 42, 
                  root_path: str = None, 
                  use_logging: bool = True,
@@ -41,12 +40,11 @@ class BaseTree(ABC):
                 - scalerX: scaler for the inputs
                 - scalerY: scaler for the outputs (only relevant for regression problems)
                 - dataset (np.ndarray): input dataset with features - not-normalised
-                - targets (np.ndarray): output dataset with targets - not-normalised
+                - targets (np.ndarray): output dataset with targets - not-normalised - should be the predictions of the model for the input dataset
+                - target_probs (np.ndarray): output dataset with target probabilities - not-normalised - should be the probabilities of the model for the input dataset
                 - feature_names (list): list with all feature names for plotting purposes
                 - target_names (list): list with all target names for plotting purposes
                 - feature_types (list): list that defines numerical features - 'N' - and categorical features - 'C'. Categorical features will not be considered for normalisation
-                - use_synth_ds (bool): flag to enable or disable the synthetic dataset generation process
-                - synth_ds_info (dict): dictionary with information about the synthetic dataset generation process. If None, no synthetic dataset will be generated. It must contain info regarding (1) sampler to be used, (2) n_samples to be generated, and (3) strategy for the final dataset creation, and (4) sampler kwargs. More specific info in the 
                 - seed (int): seed for random number generation
                 - root_path (str): specific path to store results. If not given, it stores in the current working directory, inly when required
                 - logging (bool): flag to enable or disable logging
@@ -57,6 +55,7 @@ class BaseTree(ABC):
         self.scalerY = scalerY
         self.dataset = dataset
         self.targets = targets
+        self.target_probs = target_probs
         self.feature_names = feature_names
         self.target_names = target_names
         self.feature_types = feature_types
@@ -84,26 +83,21 @@ class BaseTree(ABC):
         self.numerical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'N']
         self.categorical_idx = [i for i, feat in enumerate(self.feature_types) if feat == 'C']
 
+        # model predictions (hard-labels)
+        if self.targets is None:
+            targets = self.model.predict(self.dataset)
+            self.targets = self._postprocess_prediction(targets)
         # Reshaping targets so that they have always 2 dimensions
         if len(self.targets.shape) == 1:
             self.targets = self.targets.reshape(-1, 1)
 
-        # Handling the synthetic dataset generation process
-        if not use_synth_ds:   # if not, default dataset will be used
-            self.decode_dataset = self.dataset
-            self.decode_targets = self.targets
-            self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-        else:
-            # Getting a series of info regarding the synthetic dataset generation
-            sampler = synth_ds_info.get('sampler', 'sobol')
-            n_samples = synth_ds_info.get('n_samples', 'auto')
-            strategy = synth_ds_info.get('strategy', 'synth')
-            sampler_kwargs = synth_ds_info.get('sampler_kwargs', {})
-            self._generate_synthetic_dataset(sampler = sampler, n_samples = n_samples, strategy = strategy, **sampler_kwargs)
-
-        # Conducting the predictions with the model        
-        self.model_preds = self._postprocess_prediction(self.model.predict(self.decode_normalised_dataset))
-        self.model_probs = self.model.predict_proba(self.decode_normalised_dataset)
+        # model prediction probabilities (soft-labels)
+        if self.target_probs is None:
+            if hasattr(self.model, "predict_proba"):
+                self.target_probs = self.model.predict_proba(self.dataset)
+            else:
+                logger.warning("Model does not have predict_proba method. Using hard predictions instead.")
+                self.target_probs = self.targets
 
         # Resetting the tree
         self._reset_tree()
@@ -371,7 +365,7 @@ class BaseTree(ABC):
                     continue
 
                 # ADAPTIVE CASE: iteratively refine bins with high impurity
-                preds_all = self.model_probs[dataset_idx]
+                preds_all = self.target_probs[dataset_idx]
                 preds_f = preds_all[finite_mask]
 
                 # If no valid edges, nothing to refine (but keep empty)
@@ -461,8 +455,8 @@ class BaseTree(ABC):
         current_ds = self.decode_dataset[dataset_idx]
 
         # Current preds
-        # preds = self.model_preds[dataset_idx] if criterium in ['gini', 'log_loss'] else self.model_probs[dataset_idx]
-        preds = self.model_probs[dataset_idx]
+        # preds = self.targets[dataset_idx] if criterium in ['gini', 'log_loss'] else self.target_probs[dataset_idx]
+        preds = self.target_probs[dataset_idx]
 
         # Conduct all splits
         n_samples = current_ds.shape[0]

@@ -20,11 +20,10 @@ class ClassificationTree(BaseTree):
                  scalerY = None, 
                  dataset: np.ndarray = None, 
                  targets: np.ndarray = None, 
+                 target_probs: np.ndarray = None,
                  feature_names: list = None, 
                  target_names: list = None, 
                  feature_types: list = None, 
-                 use_synth_ds: bool = False,
-                 synth_ds_info: dict = None,
                  seed: int = 42, 
                  root_path: str = None, 
                  use_logging: bool = True,
@@ -38,11 +37,10 @@ class ClassificationTree(BaseTree):
             scalerY = scalerY,
             dataset = dataset,
             targets = targets,
+            target_probs = target_probs,
             feature_names = feature_names,
             target_names = target_names,
             feature_types = feature_types,
-            use_synth_ds = use_synth_ds,
-            synth_ds_info = synth_ds_info,
             seed = seed,
             root_path = root_path,
             use_logging = use_logging,
@@ -230,8 +228,8 @@ class ClassificationTree(BaseTree):
 
         ## Appending the necessary information
         self.N_NODE_SAMPLES.append(len(self.decode_dataset))
-        # self.IMPURITY.append(self._impurity_calculation(self.model_preds if criterium in ['gini', 'log_loss'] else self.model_probs, criterium = criterium))
-        self.IMPURITY.append(self._impurity_calculation(self.model_probs, criterium = 'gini'))
+        # self.IMPURITY.append(self._impurity_calculation(self.target_preds if criterium in ['gini', 'log_loss'] else self.target_probs, criterium = criterium))
+        self.IMPURITY.append(self._impurity_calculation(self.target_probs, criterium = 'gini'))
         self.VALUE.append(final_res[1])
         self.FEATURE.append(int(final_res[0]))
         self.LEFT.append(0)                      
@@ -273,10 +271,10 @@ class ClassificationTree(BaseTree):
         self.NODE_DS.append(dataset_idx)
 
         # 1. Initial information for the tree
-        # node_imp = self._impurity_calculation(self.model_preds[dataset_idx] if criterium in ['gini', 'log_loss'] else self.model_probs[dataset_idx], criterium = criterium)
-        node_imp = self._impurity_calculation(self.model_probs[dataset_idx], criterium = 'gini')
+        # node_imp = self._impurity_calculation(self.target_preds[dataset_idx] if criterium in ['gini', 'log_loss'] else self.target_probs[dataset_idx], criterium = criterium)
+        node_imp = self._impurity_calculation(self.target_probs[dataset_idx], criterium = 'gini')
 
-        preds_dist = np.bincount(self.model_preds[dataset_idx], minlength = len(self.target_names))
+        preds_dist = np.bincount(self.target_preds[dataset_idx], minlength = len(self.target_names))
         self.N_NODE_SAMPLES.append(len(dataset_idx))
         self.IMPURITY.append(node_imp)
         self.CLASS.append(np.argmax(preds_dist))
