@@ -19,12 +19,9 @@ class ClassificationTree(BaseTree):
                  scalerY = None, 
                  dataset: np.ndarray = None, 
                  targets: np.ndarray = None, 
-                 model_preds: np.ndarray = None,
                  feature_names: list = None, 
                  target_names: list = None, 
                  feature_types: list = None, 
-                 use_synth_ds: bool = False,
-                 synth_ds_info: dict = None,
                  seed: int = 42, 
                  root_path: str = None, 
                  use_logging: bool = True):
@@ -37,12 +34,9 @@ class ClassificationTree(BaseTree):
             scalerY = scalerY,
             dataset = dataset,
             targets = targets,
-            model_preds = model_preds,
             feature_names = feature_names,
             target_names = target_names,
             feature_types = feature_types,
-            use_synth_ds = use_synth_ds,
-            synth_ds_info = synth_ds_info,
             seed = seed,
             root_path = root_path,
             use_logging = use_logging
@@ -184,10 +178,10 @@ class ClassificationTree(BaseTree):
                 - original_preds (np.ndarray): original predictions for the entire dataset
         """
         # Auxiliary variable - class distribution for the original targets
-        target_dist = np.unique(self.decode_targets, return_counts = True)[1]
+        target_dist = np.unique(self.targets, return_counts = True)[1]
 
         ## Appending the necessary information
-        self.N_NODE_SAMPLES.append(len(self.decode_dataset))
+        self.N_NODE_SAMPLES.append(len(self.dataset))
         self.IMPURITY.append(self._impurity_calculation(original_preds, 'gini'))
         self.VALUE.append(final_res[1])
         self.FEATURE.append(int(final_res[0]))
@@ -197,7 +191,7 @@ class ClassificationTree(BaseTree):
         self.PARENT.append(-1)
         self.CLASS.append(np.argmax(target_dist))
         self.CLASS_DIST.append(target_dist)
-        self.NODE_DS.append(np.arange(len(self.decode_dataset)))    
+        self.NODE_DS.append(np.arange(len(self.dataset)))    
 
 
     def _expand_node(self, 
@@ -381,7 +375,7 @@ class ClassificationTree(BaseTree):
         VALUE = np.array(self.VALUE)
         LEFT = np.array(self.LEFT)
 
-        start_domain = np.concatenate((np.min(self.decode_dataset, axis = 0).reshape(1, -1), np.max(self.decode_dataset, axis = 0).reshape(1, -1)), axis = 0).T        
+        start_domain = np.concatenate((np.min(self.dataset, axis = 0).reshape(1, -1), np.max(self.dataset, axis = 0).reshape(1, -1)), axis = 0).T        
         all_rule_info = {}
 
         for i, path in enumerate(all_paths):
@@ -407,11 +401,11 @@ class ClassificationTree(BaseTree):
             info['limits'] = {}
             for j, feat in enumerate(used_variables):
                 info['domain'][self.feature_names[feat]] = np.round(used_variables_domain[j], 3)
-                info['limits'][self.feature_names[feat]] = np.array([np.round(np.min(self.decode_dataset[:, feat]), 3), np.round(np.max(self.decode_dataset[:, feat]), 3)])
+                info['limits'][self.feature_names[feat]] = np.array([np.round(np.min(self.dataset[:, feat]), 3), np.round(np.max(self.dataset[:, feat]), 3)])
 
             # STEP 3 - Extracting rule coverage information + output probability
             class_dist = self.CLASS_DIST[path[-1]]
-            rule_samples, total_samples = np.sum(class_dist), self.decode_dataset.shape[0]
+            rule_samples, total_samples = np.sum(class_dist), self.dataset.shape[0]
             info['coverage'] = np.round(rule_samples/total_samples, 3)
             info['output_probability'] = np.round(class_dist[np.argmax(class_dist)]/rule_samples, 3)
             info['target_class'] = self.target_names[self.CLASS[path[-1]]]

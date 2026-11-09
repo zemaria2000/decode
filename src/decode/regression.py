@@ -23,8 +23,6 @@ class RegressionTree(BaseTree):
                 feature_names: list = None, 
                 target_names: list = None, 
                 feature_types: list = None, 
-                use_synth_ds: bool = False,
-                synth_ds_info: dict = None,
                 seed: int = 42, 
                 root_path: str = None, 
                 use_logging: bool = True):
@@ -40,8 +38,6 @@ class RegressionTree(BaseTree):
             feature_names = feature_names,
             target_names = target_names,
             feature_types = feature_types,
-            use_synth_ds = use_synth_ds,
-            synth_ds_info = synth_ds_info,
             seed = seed,
             root_path = root_path,
             use_logging = use_logging

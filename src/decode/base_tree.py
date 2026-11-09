@@ -23,15 +23,12 @@ class BaseTree(ABC):
     def __init__(self, 
                  model, 
                  dataset: np.ndarray, 
-                 targets: np.ndarray, 
-                 model_preds: np.ndarray = None,
+                 targets: np.ndarray = None, 
                  scalerX = None, 
                  scalerY = None, 
                  feature_names: list = None, 
                  target_names: list = None, 
                  feature_types: list = None,
-                 use_synth_ds: bool = False,
-                 synth_ds_info: dict = None,
                  seed: int = 42, 
                  root_path: str = None, 
                  use_logging: bool = True):
@@ -41,8 +38,7 @@ class BaseTree(ABC):
                 - scalerX: scaler for the inputs
                 - scalerY: scaler for the outputs (only relevant for regression problems)
                 - dataset (np.ndarray): input dataset with features - not-normalised
-                - targets (np.ndarray): output dataset with targets - not-normalised
-                - model_preds (np.ndarray): predictions from the model
+                - targets (np.ndarray): output dataset with targets - not-normalised - note that these should be the labels providade by the black-box model. If empty, the model will manually generate the predictions
                 - feature_names (list): list with all feature names for plotting purposes
                 - target_names (list): list with all target names for plotting purposes
                 - feature_types (list): list that defines numerical features - 'N' - and categorical features - 'C'. Categorical features will not be considered for normalisation
@@ -72,7 +68,7 @@ class BaseTree(ABC):
         if self.dataset is None:
             raise KeyError("No input dataset has been provided")
         if self.targets is None:
-            raise KeyError("No output targets have been provided")
+            raise KeyError("No output targets have been provided. Predictions will be manaully conducted...")
         if self.target_names is None:
             logger.warning("No target names have been provided. Replaced by an ordered list of integers")
             self.target_names = [f'Target {i}' for i in range(len(np.unique(targets)))]
@@ -90,23 +86,14 @@ class BaseTree(ABC):
         if len(self.targets.shape) == 1:
             self.targets = self.targets.reshape(-1, 1)
 
-        # Handling the synthetic dataset generation process
-        if not use_synth_ds:   # if not, default dataset will be used
-            self.decode_dataset = self.dataset
-            self.decode_targets = self.targets
-            self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-        else:
-            # Getting a series of info regarding the synthetic dataset generation
-            sampler = synth_ds_info.get('sampler', 'sobol')
-            n_samples = synth_ds_info.get('n_samples', 'auto')
-            strategy = synth_ds_info.get('strategy', 'synth')
-            sampler_kwargs = synth_ds_info.get('sampler_kwargs', {})
-            self._generate_synthetic_dataset(sampler = sampler, n_samples = n_samples, strategy = strategy, **sampler_kwargs)
+        # Getting a normalised version of the dataset to be used for predictions
+        self.decode_normalised_dataset = self._scale_inputs(self.dataset)
 
-        # Conducting the predictions with the model
-        if self.model_preds is None:
-            model_preds = self.model.predict(self.decode_normalised_dataset)
-            self.model_preds = self._postprocess_prediction(model_preds) 
+        if self.targets is None:
+            targets = self.model.predict(self.decode_normalised_dataset)
+            self.targets = self._postprocess_prediction(targets)
+        else:
+            self.targets = self._postprocess_prediction(self.targets)
 
         # Resetting the tree
         self._reset_tree()
@@ -115,7 +102,7 @@ class BaseTree(ABC):
         self._storage_settings()
 
         # Internal flag that states if the tree is for multi-output or single_output regression
-        self.flag_multi_output = True if self.decode_targets.shape[1] > 1 else False
+        self.flag_multi_output = True if self.targets.shape[1] > 1 else False
 
         if use_logging:
             logger.setLevel(logging.DEBUG)
@@ -124,8 +111,6 @@ class BaseTree(ABC):
             logger.setLevel(logging.CRITICAL)
 
         logger.info("Initialised tree object")
-
-
 
 
     #########################################################
@@ -246,47 +231,7 @@ class BaseTree(ABC):
             return self._postprocess_regression(y_raw)
 
         else:
-            raise ValueError("BaseTree.task not set")
-        
-
-    ###############################################################
-    ################# SYNTHETIC DATASET GENERATION ################
-    ###############################################################
-
-    def _generate_synthetic_dataset(self, sampler: str = None, n_samples: Union[str, int] = 'auto', strategy: str = None, **sampler_kwargs):
-
-        # Generating the synthetic dataset
-        if len(self.numerical_idx) == 0:   # Categorical dataset
-            x_synth, y_synth = generate_categorical_synthetic_dataset(self.dataset, self.model)
-            if x_synth.shape[0] > 1e6:
-                logging.warning("Generated synthetic dataset has more than 1 million samples. This may lead to memory issues. As such, we will be defaulting to the original dataset only")
-                self.decode_dataset = self.dataset
-                self.decode_targets = self.targets
-                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-            else:
-                self.decode_dataset = x_synth
-                self.decode_targets = y_synth.reshape(-1, 1)
-                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-        else:   # Continuous or mixed dataset
-            x_synth, y_synth = generate_continuous_synth_dataset(dataset = self.dataset, 
-                                                                    scaler = self.scalerX,
-                                                                    model = self.model,
-                                                                    numerical_idx = self.numerical_idx,
-                                                                    categorical_idx = self.categorical_idx,
-                                                                    sampler_name = sampler,
-                                                                    n_samples = n_samples,
-                                                                    seed = self.seed, 
-                                                                    **sampler_kwargs)
-            if strategy == 'synth':
-                self.decode_dataset = x_synth
-                self.decode_targets = y_synth.reshape(-1, 1)
-                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-            elif strategy == 'both':
-                self.decode_dataset = np.concatenate((self.dataset, x_synth), axis = 0)
-                self.decode_targets = np.concatenate((self.targets, y_synth.reshape(-1, 1)), axis = 0)
-                self.decode_normalised_dataset = self._scale_inputs(self.decode_dataset)
-
-        
+            raise ValueError("BaseTree.task not set")        
 
     ###############################################################
     ################### VARIABLE DISCRETIZATION ###################
@@ -311,7 +256,7 @@ class BaseTree(ABC):
         """
         step_info = {}
         for i, feature in enumerate(self.feature_names):
-            feature_data = self.decode_dataset[dataset_idx, i]
+            feature_data = self.dataset[dataset_idx, i]
             # In case we are dealing with a numerical feature
             if self.feature_types[i] == 'N':            
                 step_info[feature] = {
@@ -389,7 +334,7 @@ class BaseTree(ABC):
         """
             Auxiliary function that automatically calculates the candidate score for a particular split of the dataset
             Args:
-                - dataset_idx (np.ndarray): index, relative to the original dataset (self.decode_dataset), of our current dataset to be assessed
+                - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
                 - preds (np.ndarray): predictions for our current dataset
                 - feature_idx (int): feature index of the target rule
                 - feature_values (np.ndarray): all possible values for the target rule
@@ -399,7 +344,7 @@ class BaseTree(ABC):
             See https://scikit-learn.org/stable/modules/tree.html#tree-mathematical-formulation for more details
         """
         # Current dataset
-        current_ds = self.decode_dataset[dataset_idx]
+        current_ds = self.dataset[dataset_idx]
 
         # Conduct all splits
         n_samples = current_ds.shape[0]
@@ -424,7 +369,7 @@ class BaseTree(ABC):
         candidate_scores = original_impurity - ((n_left_samples[valid_mask]/n_samples)*left_impurities + (n_right_samples[valid_mask]/n_samples)*right_impurities)
 
         # Global impurity decreases + checking their compliance with the min_impurity_decrease criterium
-        global_impurity_decreases = (n_samples/len(self.decode_dataset))*candidate_scores
+        global_impurity_decreases = (n_samples/len(self.dataset))*candidate_scores
         candidate_scores[global_impurity_decreases < self.min_impurity_decrease] = np.nan
 
         # Returning the scores for all possible feature values
@@ -437,7 +382,7 @@ class BaseTree(ABC):
         """
             Executes a new trial for each feature and its steps, based on the providade dataset
             Args:
-                - dataset_idx (np.ndarray): index, relative to the original dataset (self.decode_dataset), of our current dataset to be assessed
+                - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
                 - preds (np.ndarray): predictions for the current dataset (self.model.predict(self.decode_normalised_dataset[dataset_idx]))
                 - step_info (dict): dictionary with the feature steps information
                 - criterium (str): str that defines the choosing criterium - "default" by default 
@@ -484,8 +429,8 @@ class BaseTree(ABC):
         """
         if isinstance(class_weights, str) and class_weights == 'balanced':
             # Computing the class weights based on the dataset + pre-computed formula (based on sklearn's one)
-            n_samples, n_classes = len(self.decode_targets), len(np.unique(self.decode_targets))
-            class_counts = np.bincount(self.decode_targets.flatten().astype(int))
+            n_samples, n_classes = len(self.targets), len(np.unique(self.targets))
+            class_counts = np.bincount(self.targets.flatten().astype(int))
             self.class_weights = {i: n_samples/(n_classes*class_counts[i]) for i in range(n_classes)}
         elif isinstance(class_weights, dict):
             self.class_weights = class_weights
@@ -531,7 +476,7 @@ class BaseTree(ABC):
         self._reset_tree()
 
         ### 1. INITIAL NODE TRIAL
-        original_idx = np.arange(len(self.decode_dataset))
+        original_idx = np.arange(len(self.dataset))
         original_preds = self.model_preds     
         step_info = self._create_auto_steps(original_idx, n_steps = n_steps, adaptive = adaptive)
         final_res = self.execute_trial(original_idx, original_preds, step_info, criterium = criterium)
@@ -557,7 +502,7 @@ class BaseTree(ABC):
                     continue
 
                 ## 2.1. SELECT DATASET IDXS FOR THE NEXT NODE
-                current_ds = self.decode_dataset[self.NODE_DS[prev_node_index]]    
+                current_ds = self.dataset[self.NODE_DS[prev_node_index]]    
                 left_mask = current_ds[:, self.FEATURE[prev_node_index]] <= self.VALUE[prev_node_index]
                 left_ds_idx = self.NODE_DS[prev_node_index][left_mask]
                 right_ds_idx = self.NODE_DS[prev_node_index][~left_mask]
