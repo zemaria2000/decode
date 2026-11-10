@@ -62,159 +62,233 @@ class ClassificationTree(BaseTree):
         else:
             return y_raw.astype(int)
 
-    def _refine_step_bins(
-        self,
-        preds: np.ndarray,
-        bin_idx: np.ndarray,
-        edges: np.ndarray,
-        criterium: str,
-        min_bin: int = 10,
-        score_mult: float = 1.0,
-        support: str = "log",      # "none" | "log" | "sqrt"
-        alpha: float = 0.5
+    def _refine_step_bins(self,
+                        preds: np.ndarray,
+                        bin_idx: np.ndarray,
+                        edges: np.ndarray,
+                        criterium: str,
+                        min_bin: int = 10,
+                        score_mult: float = 1.0,
+                        support: str = "log",      # "none" | "log" | "sqrt"
+                        alpha: float = 0.5,
+                        eps: float = 1e-12,
+                        normalized: bool = True
     ):
-        """
-            Refine bins whose within-bin impurity (using the same criterium as the tree) is high relative to the median.
-            Args:
-                - preds (np.ndarray): soft predictions for the samples in the current node
-                - bin_idx (np.ndarray): bin indices for each sample
-                - edges (np.ndarray): edges used for binning
-                - criterium (str): criterium for impurity calculation
-                - min_bin (int): minimum number of samples in a bin to consider it for refinement
-                - score_mult (float): multiplier for the median score to consider a bin for refinement
-                - support (str): support factor to use ("none", "log", "sqrt")
-            Returns:
-                - refine_bins (list): list of bin indices to be refined
-        """
         n_bins = len(edges) + 1
-        scores = np.full(n_bins, np.nan, dtype=float)
+        n_classes = len(self.target_names)
+        counts = np.bincount(bin_idx, minlength=n_bins)
+        ok = counts >= min_bin
+        if not np.any(ok):
+            return []
 
-        # For each bin, a score will be computed to assess whether it should be refined or not
-        for b in range(n_bins):
-            mask = (bin_idx == b)
-            n_b = int(mask.sum())
-            if n_b < min_bin:
-                continue
+        ok_counts = counts[ok]
+        is_tuple = isinstance(criterium, tuple)
+        hard_crit = criterium[0] if is_tuple else (criterium if criterium in ('gini', 'log_loss') else None)
+        soft_crit = criterium[1] if is_tuple else (None if hard_crit is not None else criterium)
 
-            # Computing the impurity score of the current bin
-            pb = preds[mask] 
-            score = float(self._impurity_calculation(pb, criterium, alpha = alpha))
+        # 1. Vectorised hard-label bin impurities (when needed)
+        if hard_crit is not None:
+            hard_preds = preds.ravel().astype(np.int64) if preds.ndim == 1 else np.argmax(preds, axis=1)
+            hist = np.bincount(
+                bin_idx * n_classes + hard_preds,
+                minlength=n_bins * n_classes
+            ).reshape(n_bins, n_classes)
+            probs = hist[ok] / ok_counts[:, None]
+            if hard_crit == 'gini':
+                hard_imp = np.sum(probs * (1.0 - probs), axis=1)
+            elif hard_crit == 'log_loss':
+                p_clip = np.clip(probs, eps, 1.0)
+                hard_imp = -np.sum(p_clip * np.log(p_clip), axis=1) / np.log(2.0)
 
-            # Optional support factor to avoid over-refining tiny bins
-            if support == "log":
-                score *= np.log1p(n_b)
-            elif support == "sqrt":
-                score *= np.sqrt(n_b)
-            elif support == "none":
-                pass
+        # 2. Vectorised soft-label bin impurities (when needed)
+        if soft_crit is not None:
+            P = preds if normalized else safe_normalize_probs(preds, eps = eps)
+            if soft_crit in ('soft_gini', 'soft_log_loss', 'mutual_info', 'kl', 'brier'):
+                sum_P = np.zeros((n_bins, n_classes), dtype=float)
+                np.add.at(sum_P, bin_idx, P)
+                meanP = sum_P[ok] / ok_counts[:, None]
+
+                if soft_crit == 'soft_gini':
+                    soft_imp = np.sum(meanP * (1.0 - meanP), axis=1)
+                elif soft_crit == 'soft_log_loss':
+                    m_clip = np.clip(meanP, eps, 1.0)
+                    soft_imp = -np.sum(m_clip * np.log(m_clip), axis=1) / np.log(2.0)
+                elif soft_crit in ('mutual_info', 'kl'):
+                    # (1/n_b) * sum_{i in b} KL(P_i || meanP_b) == H(meanP_b) - mean_{i in b} H(P_i)
+                    h_sample = entropy_vec(P, eps=eps)
+                    mean_h = np.bincount(bin_idx, weights=h_sample, minlength=n_bins)[ok] / ok_counts
+                    soft_imp = entropy_vec(meanP, eps=eps) - mean_h
+                elif soft_crit == 'brier':
+                    # (1/n_b) * sum_{i in b} ||P_i - meanP_b||^2 == mean_{i in b} ||P_i||^2 - ||meanP_b||^2
+                    q_sample = np.sum(P ** 2, axis=1)
+                    mean_q = np.bincount(bin_idx, weights=q_sample, minlength=n_bins)[ok] / ok_counts
+                    soft_imp = mean_q - np.sum(meanP ** 2, axis=1)
+
+            elif soft_crit in ('soft_label_distance_perfect', 'brier_perfect', 'kl_perfect', 'js_perfect'):
+                labels = np.argmax(preds, axis=1)
+                one_hot = np.zeros((labels.shape[0], n_classes), dtype=float)
+                one_hot[np.arange(labels.shape[0]), labels] = 1.0
+                if soft_crit == 'soft_label_distance_perfect':
+                    d_sample = np.linalg.norm(P - one_hot, axis=1)
+                elif soft_crit == 'brier_perfect':
+                    d_sample = np.sum((P - one_hot) ** 2, axis=1)
+                elif soft_crit == 'kl_perfect':
+                    d_sample = kl(P, one_hot, eps=eps)
+                elif soft_crit == 'js_perfect':
+                    d_sample = js_divergence(P, one_hot, eps=eps)
+                soft_imp = np.bincount(bin_idx, weights=d_sample, minlength=n_bins)[ok] / ok_counts
+
             else:
-                raise ValueError(f"Unknown support='{support}'")
+                # Non-linear mean criteria (e.g. 'js'): group once by sorting bin_idx instead of O(B*N) masks
+                order = np.argsort(bin_idx, kind="stable")
+                P_sorted = P[order]
+                ends = np.cumsum(counts)
+                starts = ends - counts
+                ok_bins = np.where(ok)[0]
+                soft_imp = np.empty(ok_bins.size, dtype=float)
+                for idx, b in enumerate(ok_bins):
+                    pb = P_sorted[starts[b]:ends[b]]
+                    mean_pb = pb.mean(axis=0)[None, :]
+                    soft_imp[idx] = float(np.mean(js_divergence(pb, mean_pb, eps)))
 
-            # Output score for the bin
-            scores[b] = score
+        # 3. Combine scores (single criterion or hybrid tuple)
+        if not is_tuple:
+            scores_ok = hard_imp if hard_crit is not None else soft_imp
+        else:
+            norm_hard = (1.0 - 1.0 / n_classes) if hard_crit == 'gini' else np.log(n_classes)
+            if soft_crit == 'soft_gini':
+                norm_soft = 1.0 - 1.0 / n_classes
+            elif soft_crit in ('soft_log_loss', 'mutual_info'):
+                norm_soft = np.log(n_classes)
+            elif soft_crit == 'js':
+                norm_soft = np.log(2.0)
+            elif soft_crit == 'brier':
+                norm_soft = 2.0 * (1.0 - 1.0 / n_classes)
+            scores_ok = alpha * (hard_imp / norm_hard) + (1.0 - alpha) * (soft_imp / norm_soft)
 
-        # Decide which bins to refine
+        # 4. Apply support factor across all valid bins at once
+        if support == "log":
+            scores_ok = scores_ok * np.log1p(ok_counts)
+        elif support == "sqrt":
+            scores_ok = scores_ok * np.sqrt(ok_counts)
+        elif support != "none":
+            raise ValueError(f"Unknown support='{support}'")
+
+        scores = np.full(n_bins, np.nan, dtype=float)
+        scores[ok] = scores_ok
+
         valid = np.where(~np.isnan(scores))[0]
         if valid.size == 0:
             return []
         med = np.nanmedian(scores[valid])
         refine_bins = valid[scores[valid] > (med * score_mult)]
-        
-        return refine_bins.tolist()   
+        return refine_bins.tolist()  
 
-    def _impurity_calculation(self, preds: np.ndarray, criterium, alpha: float = 0.5,
-                            eps: float = 1e-12) -> float:
+    def _hard_probs(self, preds: np.ndarray, n_classes: int) -> np.ndarray:
+        """Compute (optionally class-weighted) hard-label distribution only when needed."""
+        hard_preds = preds.ravel().astype(np.int64) if preds.ndim == 1 else np.argmax(preds, axis=1)
+        class_counts = np.bincount(hard_preds, minlength=n_classes)
+        if getattr(self, "class_weights", None) is not None:
+            weights = (
+                np.asarray(list(self.class_weights.values()), dtype=float)
+                if isinstance(self.class_weights, dict)
+                else np.asarray(self.class_weights, dtype=float)
+            )
+            wc = weights * class_counts
+            return wc / wc.sum()
+        return class_counts / class_counts.sum()
+
+    def _soft_impurity(self, P: np.ndarray, soft_crit: str, eps: float = 1e-12) -> float:
+        """Evaluate a soft-label criterion on pre-normalized probability matrix P."""
+        if soft_crit in ('soft_gini', 'soft_log_loss', 'mutual_info', 'kl', 'brier', 'js'):
+            meanP = P.mean(axis=0)
+            if soft_crit == 'soft_gini':
+                return float(gini(meanP))
+            elif soft_crit == 'soft_log_loss':
+                return float(log_loss(meanP))
+            elif soft_crit in ('mutual_info', 'kl'):
+                return float(entropy_vec(meanP, eps=eps, normalized=True) - np.mean(entropy_vec(P, eps=eps, normalized=True)))
+            elif soft_crit == 'brier':
+                return float(np.mean(np.sum(P ** 2, axis=1)) - np.sum(meanP ** 2))
+            elif soft_crit == 'js':
+                return float(np.mean(js_divergence(P, meanP[None, :], eps=eps, normalized=True)))
+
+        # Criteria based on distance to sample-wise one-hot ("perfect") distribution
+        p_max = np.max(P, axis=1)
+        if soft_crit == 'brier_perfect':
+            return float(np.mean(np.sum(P ** 2, axis=1) - 2.0 * p_max + 1.0))
+        elif soft_crit == 'soft_label_distance_perfect':
+            sq_dist = np.maximum(np.sum(P ** 2, axis=1) - 2.0 * p_max + 1.0, 0.0)
+            return float(np.mean(np.sqrt(sq_dist)))
+        elif soft_crit in ('kl_perfect', 'js_perfect'):
+            labels = np.argmax(P, axis=1)
+            one_hot = np.zeros((P.shape[0], len(self.target_names)), dtype=float)
+            one_hot[np.arange(P.shape[0]), labels] = 1.0
+            one_hot = safe_normalize_probs(one_hot, eps=eps)
+            if soft_crit == 'kl_perfect':
+                return float(np.mean(kl(P, one_hot, eps=eps, normalized=True)))
+            return float(np.mean(js_divergence(P, one_hot, eps=eps, normalized=True)))
+
+        raise ValueError(f"Unknown soft criterium '{soft_crit}'")
+
+    def _impurity_calculation(self, preds: np.ndarray, 
+                              criterium = 'soft_log_loss', 
+                              alpha: float = 0.5,
+                              eps: float = 1e-12, 
+                              normalized: bool = True) -> float:
         """
             Computing the impurity of a node based on the selected criterium
             Args:
                 - preds (np.ndarray): model predictions for the samples in the current node (can either be hard or soft labels, depending on the chosen criterium)
                 - criterium (str): criterium for impurity calculation
+                - alpha (float): weight for hybrid criterium (if applicable)
                 - eps (float): small value to ensure numerical stability
+                - normalized (bool): whether to normalize the predictions to probabilities (for soft-label criteria)
             Returns:
                 - impurity (float): impurity score for the current node
         """
+
         if preds.shape[0] == 0:
             return 0.0  # convention; should not happen due to min_samples_split
 
-        # Hard labels
-        hard_preds = np.argmax(preds, axis = 1)
-        class_counts = np.bincount(hard_preds, minlength = len(self.target_names))
-        probs = class_counts / class_counts.sum()
-        # Soft labels
-        # Ensure probability predictions are normalised
-        P = safe_normalize_probs(preds, eps = eps)
-        meanP = P.mean(axis=0)  # average prediction probabilities
-        
-        if type(criterium) is str:
-            ## 1. CRITERIA BASED ON HARD LABELS ##
-            # Gini
-            if criterium == 'gini':
-                return gini(probs)
-            # Log loss
-            elif criterium == 'log_loss':
-                return log_loss(probs)
-            
-            ## 2. CRITERIA BASED ON SOFT LABELS + MEAN DISTRIBUTION ##
-            # Soft gini
-            elif criterium == 'soft_gini':
-                return gini(meanP)
-            # Soft log loss
-            elif criterium == 'soft_log_loss':
-                return log_loss(meanP)
-            # Mutual information
-            elif criterium == 'mutual_info':
-                return float(entropy_vec(meanP) - np.mean(entropy_vec(P)))
-            # JS divergence
-            elif criterium == 'js':
-                meanP = P.mean(axis=0)[None, :]  # shape (1,K)
-                return float(np.mean(js_divergence(P, meanP, eps)))
-            # Brier score
-            elif criterium == 'brier':
-                return float(np.mean(np.sum((P - meanP) ** 2, axis=1)))
-            # KL divergence
-            elif criterium == 'kl':
-                meanP = P.mean(axis=0)[None, :]  # shape (1,K)
-                return float(np.mean(kl(P, meanP, eps)))
+        n_classes = len(self.target_names)
+        if criterium == 'default':
+            criterium = 'soft_log_loss'
 
-            ## 3. CRITERIA BASED ON SOFT LABELS + PERFECT DISTRIBUTION ##
-            # Creating the "perfect" distribution
-            labels = np.asarray(hard_preds)
-            one_hot = np.zeros((labels.shape[0], len(self.target_names)))
-            one_hot[np.arange(labels.shape[0]), labels] = 1
-            # Soft label distance to perfect distribution
-            if criterium == 'soft_label_distance_perfect':
-                return np.mean(np.linalg.norm(P - one_hot, axis = 1))
-            # Brier dispersion to perfect distribution
-            elif criterium == 'brier_perfect':
-                return np.mean(np.sum((P - one_hot)**2, axis = 1))
-            # KL divergence to perfect
-            elif criterium == 'kl_perfect':
-                return float(np.mean(kl(P, one_hot, eps)))
-            elif criterium == 'js_perfect':
-                return float(np.mean(js_divergence(P, one_hot, eps)))
-        
+        if isinstance(criterium, str):
+            ## 1. CRITERIA BASED ON HARD LABELS (skip P normalization & meanP) ##
+            if criterium in ('gini', 'log_loss'):
+                probs = self._hard_probs(preds, n_classes)
+                return float(gini(probs) if criterium == 'gini' else log_loss(probs))
+
+            ## 2 & 3. CRITERIA BASED ON SOFT LABELS (skip hard bincount) ##
+            P = preds if normalized else safe_normalize_probs(preds, eps=eps)
+            return self._soft_impurity(P, criterium, eps=eps)
+
         ## 4. HARD LABEL + SOFT LABEL HYBRID CRITERIA ##
-        elif type(criterium) is tuple:
-            # Hard impurities
+        elif isinstance(criterium, tuple):
+            probs = self._hard_probs(preds, n_classes)
             if criterium[0] == 'gini':
-                hard_imp = gini(probs)/(1-1/len(self.target_names))
+                hard_imp = gini(probs) / (1.0 - 1.0 / n_classes)
             elif criterium[0] == 'log_loss':
-                hard_imp = log_loss(probs)/np.log(len(self.target_names))
-            # Soft impurities
+                hard_imp = log_loss(probs) / np.log(n_classes)
+            else:
+                raise ValueError(f"Unknown hard criterium '{criterium[0]}'")
+
+            P = preds if normalized else safe_normalize_probs(preds, eps=eps)
+            raw_soft = self._soft_impurity(P, criterium[1], eps=eps)
             if criterium[1] == 'soft_gini':
-                soft_imp = gini(meanP)/(1-1/len(self.target_names))
-            elif criterium[1] == 'soft_log_loss':
-                soft_imp = log_loss(meanP)/np.log(len(self.target_names))
-            elif criterium[1] == 'mutual_info':
-                soft_imp = float(entropy_vec(meanP) - np.mean(entropy_vec(P)))/np.log(len(self.target_names))
+                soft_imp = raw_soft / (1.0 - 1.0 / n_classes)
+            elif criterium[1] in ('soft_log_loss', 'mutual_info'):
+                soft_imp = raw_soft / np.log(n_classes)
             elif criterium[1] == 'js':
-                meanP = P.mean(axis=0)[None, :]  # shape (1,K)
-                soft_imp = float(np.mean(js_divergence(P, meanP, eps)))/np.log(2)
+                soft_imp = raw_soft / np.log(2.0)
             elif criterium[1] == 'brier':
-                soft_imp = float(np.mean(np.sum((P - meanP) ** 2, axis=1)))/(2*(1-1/len(self.target_names)))
+                soft_imp = raw_soft / (2.0 * (1.0 - 1.0 / n_classes))
+            else:
+                raise ValueError(f"Unknown soft criterium '{criterium[1]}'")
 
-            return float(alpha*hard_imp + (1-alpha)*soft_imp)
-
+            return float(alpha * hard_imp + (1.0 - alpha) * soft_imp)
 
     def _initialise_root_node(self, final_res, criterium: str):
         """

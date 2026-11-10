@@ -133,34 +133,34 @@ def safe_normalize_probs(P: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     return P / row_sums
 
 # KL divergence
-def kl(P: np.ndarray, Q: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+def kl(P: np.ndarray, Q: np.ndarray, eps: float = 1e-12, normalized: bool = False) -> np.ndarray:
     """
-        Row-wise KL(P || Q). P and Q are (n, K).
+        Row-wise KL(P || Q). P and Q are (n, K) or broadcastable to (n, K).
         Returns shape (n,).
     """
-    P = safe_normalize_probs(P, eps=eps)
-    Q = safe_normalize_probs(Q, eps=eps)
-    return np.sum(P * (np.log(P) - np.log(Q)), axis = 1)
-
-def kl_divergence(P, Q, eps=1e-12):
-    # KL(P||Q) per-sample
-    P = safe_normalize_probs(P, eps)
-    Q = safe_normalize_probs(Q, eps)
+    if not normalized:
+        P = safe_normalize_probs(P, eps=eps)
+        Q = safe_normalize_probs(Q, eps=eps)
     return np.sum(P * (np.log(P) - np.log(Q)), axis=1)
 
-def entropy_vec(pi, eps=1e-12):
+kl_divergence = kl
+
+def entropy_vec(pi, eps=1e-12, normalized: bool = False):
     # pi shape: (..., K) or (K,)
-    pi = np.clip(pi, eps, 1.0)
-    pi = pi / np.sum(pi, axis=-1, keepdims=True)
+    if not normalized:
+        pi = np.clip(pi, eps, 1.0)
+        pi = pi / np.sum(pi, axis=-1, keepdims=True)
     return -np.sum(pi * np.log(pi), axis=-1)
 
 # Jensen-Shannon divergence
-def js_divergence(P, Q, eps=1e-12):
+def js_divergence(P, Q, eps=1e-12, normalized: bool = False):
     # JS(P,Q) per-sample (symmetric, bounded)
-    P = safe_normalize_probs(P, eps)
-    Q = safe_normalize_probs(Q, eps)
+    if not normalized:
+        P = safe_normalize_probs(P, eps)
+        Q = safe_normalize_probs(Q, eps)
     M = 0.5 * (P + Q)
-    return 0.5 * kl_divergence(P, M, eps) + 0.5 * kl_divergence(Q, M, eps)
+    log_M = np.log(M)
+    return 0.5 * np.sum(P * (np.log(P) - log_M), axis=1) + 0.5 * np.sum(Q * (np.log(Q) - log_M), axis=1)
 
 # # Hellinger distance
 # def hellinger2_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
@@ -244,3 +244,22 @@ def is_picklable(obj):
     return True
 
 
+###########################################################
+
+def sorted_quantile_linear(s: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """
+        Compute np.quantile(s, q, method='linear') on an already-sorted 1D array `s` using NumPy's exact virtual-index linear interpolation arithmetic, skipping copy and partition overhead.
+    """
+    n = s.shape[0]
+    virtual = (n - 1) * q
+    prev = np.floor(virtual).astype(np.intp)
+    nxt = prev + 1
+    gamma = virtual - prev
+    prev = np.clip(prev, 0, n - 1)
+    nxt = np.clip(nxt, 0, n - 1)
+    a, b = s[prev], s[nxt]
+    diff = b - a
+    res = a + diff * gamma
+    hi = gamma >= 0.5
+    res[hi] = (b - diff * (1.0 - gamma))[hi]
+    return res

@@ -101,6 +101,8 @@ class BaseTree(ABC):
                 self.target_probs = np.eye(len(classes), dtype = np.float32)[
                     np.searchsorted(classes, np.asarray(self.targets).ravel())
                 ]
+        if self.task == "classification" and self.target_probs.ndim == 2:
+            self.target_probs = safe_normalize_probs(self.target_probs)
 
         # Resetting the tree
         self._reset_tree()
@@ -204,7 +206,7 @@ class BaseTree(ABC):
     ###############################################################
 
     @abstractmethod
-    def _refine_step_bins(self, feature_data, preds, bin_idx, edges):
+    def _refine_step_bins(self, preds, bin_idx, edges, criterium='brier', min_bin=2, alpha=0.5, normalized=True):
         """ Subclass decides which bins to refine """
         pass
 
@@ -217,92 +219,75 @@ class BaseTree(ABC):
                             criterium: str = 'brier',
                             alpha: float = 0.5
                             ):
-        """
-            Generates discretization steps per feature.
-            - Numeric features:
-                * non-adaptive: histogram 'auto' bins or quantile bins
-                * adaptive: iteratively refines bins with high within-bin impurity, using model soft predictions
-            - Categorical features:
-                * uses midpoints between sorted unique integer-coded categories
-            Args:
-                - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
-                - n_steps (str/int): 'auto' or int number of initial steps for numeric features
-                - adaptive (bool): whether to use adaptive bin refinement for numeric features
-                - refine_factor (int): factor by which to refine each selected bin
-                - n_refine (int): number of refinement iterations
-                - criterium (str): criterium used to score bins for refinement
-                
-            Returns
-                - step_info : dict
-                    step_info[feature] = {'min','max','median','steps'} for numeric
-                    step_info[feature] = {'steps'} for categorical
-        """
         step_info = {}
 
+        # Gather node features and predictions ONCE per node instead of per feature
+        X_node = self.dataset[dataset_idx]
+        if adaptive:
+            preds_source = self.target_probs if self.task == "classification" else self.targets
+            preds_all = preds_source[dataset_idx]
+            sub_qs = np.linspace(0.0, 1.0, refine_factor + 1)
+            min_bin = max(2, getattr(self, "min_samples_split", 2))
+        else:
+            preds_all = None
+            sub_qs = None
+            min_bin = 2
+
+        qs = np.linspace(0.0, 1.0, n_steps + 1) if isinstance(n_steps, int) else None
+
         for j, feature in enumerate(self.feature_names):
-            x = self.dataset[dataset_idx, j]
+            x = X_node[:, j]
 
             # HANDLING NUMERICAL FEATURES
             if self.feature_types[j] == "N":
-                
-                # Filter invalid values (keeps alignment with preds if adaptive)
+                # Filter invalid values (avoid copy when all values are finite)
                 finite_mask = np.isfinite(x)
-                x_f = x[finite_mask]
+                all_finite = bool(finite_mask.all())
+                x_f = x if all_finite else x[finite_mask]
 
                 # Basic stats (handle empty/constant cases)
                 if x_f.size == 0:
-                    step_info[feature] = {"min": np.nan, "max": np.nan, "median": np.nan, "steps": np.array([])}
+                    step_info[feature] = {"min": np.nan, "max": np.nan, "steps": np.array([])}
                     continue
 
-                # min, max, and median values
-                x_min = float(np.min(x_f))
-                x_max = float(np.max(x_f))
-                x_med = float(np.median(x_f))
-                step_info[feature] = {"min": x_min, "max": x_max, "median": x_med}
+                x_min = float(x_f.min())
+                x_max = float(x_f.max())
+                step_info[feature] = {"min": x_min, "max": x_max}
 
                 # Constant feature => no thresholds
                 if not np.isfinite(x_min) or not np.isfinite(x_max) or x_min == x_max:
                     step_info[feature]["steps"] = np.array([])
                     continue
 
-                # Generating the initial edges for feature binning
-                if isinstance(n_steps, int):
-                    # Quantile-based initial edges
-                    qs = np.linspace(0.0, 1.0, n_steps + 1)
-                    edges = np.unique(np.quantile(x_f, qs))[1:-1]
-                else:
-                    # Histogram auto bins by default
-                    _, bin_edges = np.histogram(x_f, bins = "auto")
-                    edges = bin_edges[1:-1]
+                # Sort once when adaptive (or reuse for initial quantile edges)
+                srt = np.sort(x_f) if adaptive else None
 
-                # Reassuring that edges are larger than min and lower than max
-                edges = np.unique(np.sort(edges))
+                # Generating the initial edges for feature binning
+                if qs is not None:
+                    # Quantile-based initial edges
+                    q_edges = sorted_quantile_linear(srt, qs) if srt is not None else np.quantile(x_f, qs)
+                    edges = np.unique(q_edges)[1:-1]
+                else:
+                    # Edge-only histogram call (skips counting samples into bins)
+                    edges = np.unique(np.histogram_bin_edges(x_f, bins="auto")[1:-1])
+
+                # Reassuring that edges are strictly inside (min, max)
                 edges = edges[(edges > x_min) & (edges < x_max)]
 
-                # Non-adaptive case: just store edges
-                if not adaptive:
+                # Non-adaptive or empty edges: store and continue
+                if not adaptive or edges.size == 0:
                     step_info[feature]["steps"] = edges
                     continue
 
                 # ADAPTIVE CASE: iteratively refine bins with high impurity
-                preds_all = self.target_probs[dataset_idx]
-                preds_f = preds_all[finite_mask]
-
-                # If no valid edges, nothing to refine (but keep empty)
-                if edges.size == 0:
-                    step_info[feature]["steps"] = edges
-                    continue
-
-                # Minimum number of samples per bin to consider for refinement
-                min_bin = max(2, getattr(self, "min_samples_split", 2))
+                preds_f = preds_all if all_finite else preds_all[finite_mask]
 
                 for _ in range(n_refine):
-                    # Assign each sample to a current bin
-                    bin_idx = np.digitize(x_f, edges, right = True)
+                    # Equivalent to np.digitize(x_f, edges, right=True) without wrapper overhead
+                    bin_idx = np.searchsorted(edges, x_f, side="left")
 
-                    # Score bins and choose which to refine
                     refine_bins = self._refine_step_bins(
-                        preds = preds_f,          
+                        preds = preds_f,
                         bin_idx = bin_idx,
                         edges = edges,
                         min_bin = min_bin,
@@ -314,34 +299,34 @@ class BaseTree(ABC):
                         break
 
                     new_edges = edges.tolist()
+                    n_edges = len(edges)
 
                     for b in refine_bins:
-                        # Refine exactly this bin (avoid boundary logic bugs)
-                        mask_b = (bin_idx == b)
-                        if int(np.sum(mask_b)) < 2:
+                        # Locate bin `b` slice in O(log N) on pre-sorted `srt`
+                        lo = -np.inf if b == 0 else edges[b - 1]
+                        hi = np.inf if b == n_edges else edges[b]
+                        s0 = np.searchsorted(srt, lo, side="right")  # srt > lo
+                        s1 = np.searchsorted(srt, hi, side="right")  # srt <= hi
+                        if s1 - s0 < 2:
                             continue
 
-                        # Split this bin locally using quantiles
-                        sub_qs = np.linspace(0.0, 1.0, refine_factor + 1)
-                        sub_edges = np.quantile(x_f[mask_b], sub_qs)[1:-1]
+                        # Compute sub-bin quantiles in O(refine_factor) without masking or re-sorting
+                        sub_edges = sorted_quantile_linear(srt[s0:s1], sub_qs)[1:-1]
                         new_edges.extend(sub_edges.tolist())
 
-                    # Update edges: unique, sorted, inside (min,max)
-                    edges = np.unique(np.sort(np.array(new_edges, dtype=float)))
+                    # Update edges: unique, sorted, inside (min, max)
+                    edges = np.unique(np.array(new_edges, dtype=float))
                     edges = edges[(edges > x_min) & (edges < x_max)]
 
-                    # If refinement adds nothing new, stop
                     if edges.size == 0:
                         break
 
                 step_info[feature]["steps"] = edges
 
-
             # In case we are dealing with a categorical feature
             elif self.feature_types[j] == 'C':
                 unique_vals = np.unique(x).astype(int)
-                step_info[feature] = {}
-                step_info[feature]['steps'] = (unique_vals[:-1] + unique_vals[1:]) / 2
+                step_info[feature] = {'steps': (unique_vals[:-1] + unique_vals[1:]) / 2}
 
             else:
                 raise ValueError(f"Unknown feature type '{self.feature_types[j]}' for feature '{feature}'")
@@ -439,8 +424,8 @@ class BaseTree(ABC):
             return None
         
         # Sort by candidate score (last column)
-        sorted_list = score_list[score_list[:, -1].argsort()[::-1]]
-        return sorted_list[0]
+        best_idx = int(np.argmax(np.round(score_list[:, -1], 12)))
+        return score_list[best_idx]
     
 
     ###################################################################
