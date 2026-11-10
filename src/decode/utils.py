@@ -162,33 +162,33 @@ def js_divergence(P, Q, eps=1e-12):
     M = 0.5 * (P + Q)
     return 0.5 * kl_divergence(P, M, eps) + 0.5 * kl_divergence(Q, M, eps)
 
-# Hellinger distance
-def hellinger2_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    """
-        Row-wise squared Hellinger distance H^2(P_i, meanP).
-        H^2 = (1/2) * sum_k (sqrt(p_k) - sqrt(q_k))^2
-        Returns shape (n,).
-    """
-    P = safe_normalize_probs(P, eps=eps)
-    meanP = np.asarray(meanP, dtype=float)
-    meanP = np.clip(meanP, eps, 1.0)
-    meanP = meanP / np.maximum(meanP.sum(), eps)
+# # Hellinger distance
+# def hellinger2_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+#     """
+#         Row-wise squared Hellinger distance H^2(P_i, meanP).
+#         H^2 = (1/2) * sum_k (sqrt(p_k) - sqrt(q_k))^2
+#         Returns shape (n,).
+#     """
+#     P = safe_normalize_probs(P, eps=eps)
+#     meanP = np.asarray(meanP, dtype=float)
+#     meanP = np.clip(meanP, eps, 1.0)
+#     meanP = meanP / np.maximum(meanP.sum(), eps)
 
-    sP = np.sqrt(P)
-    sM = np.sqrt(meanP[None, :])
-    return 0.5 * np.sum((sP - sM) ** 2, axis=1)
+#     sP = np.sqrt(P)
+#     sM = np.sqrt(meanP[None, :])
+#     return 0.5 * np.sum((sP - sM) ** 2, axis=1)
 
-# Total Variation distance
-def tv_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    """
-        Row-wise Total Variation distance TV(P_i, meanP) = 0.5*sum|p - q|
-        Returns shape (n,).
-    """
-    P = safe_normalize_probs(P, eps=eps)
-    meanP = np.asarray(meanP, dtype=float)
-    meanP = np.clip(meanP, eps, 1.0)
-    meanP = meanP / np.maximum(meanP.sum(), eps)
-    return 0.5 * np.sum(np.abs(P - meanP[None, :]), axis=1)
+# # Total Variation distance
+# def tv_to_mean(P: np.ndarray, meanP: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+#     """
+#         Row-wise Total Variation distance TV(P_i, meanP) = 0.5*sum|p - q|
+#         Returns shape (n,).
+#     """
+#     P = safe_normalize_probs(P, eps=eps)
+#     meanP = np.asarray(meanP, dtype=float)
+#     meanP = np.clip(meanP, eps, 1.0)
+#     meanP = meanP / np.maximum(meanP.sum(), eps)
+#     return 0.5 * np.sum(np.abs(P - meanP[None, :]), axis=1)
 
 # Brier dispersion
 def brier_dispersion_to_mean(P: np.ndarray, meanP: np.ndarray, class_weights: np.ndarray | None = None,

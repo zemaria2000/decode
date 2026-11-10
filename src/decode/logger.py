@@ -6,6 +6,34 @@ import logging
 import os
 from datetime import datetime
 
+def configure_logging(enabled=True, level=logging.INFO):
+    logger = logging.getLogger("xai_tree")
+
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+        handler.close()
+
+    logger.propagate = False
+
+    if not enabled:
+        logger.addHandler(logging.NullHandler())
+        logger.disabled = True
+        return
+
+    logger.disabled = False
+    logger.setLevel(level)
+
+    handler = logging.StreamHandler()
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter(
+            "[%(asctime)s] %(levelname)s: %(message)s",
+            "%H:%M:%S"
+        )
+    )
+
+    logger.addHandler(handler)
+    
 # ==========================================================
 # LOGGING SETUP
 # ==========================================================
@@ -23,8 +51,8 @@ log_file = os.path.join(LOG_DIR, f"tree_build_{timestamp}.log")
 
 # --- 4. Configure logger ---
 logger = logging.getLogger("xai_tree")
-logger.setLevel(logging.DEBUG)
-logger.propagate = False  
+logger.addHandler(logging.NullHandler())
+logger.propagate = False
 
 if not logger.handlers:  # Prevent duplicate logs when re-imported
     # Console handler

@@ -228,7 +228,7 @@ class ClassificationTree(BaseTree):
 
         ## Appending the necessary information
         self.N_NODE_SAMPLES.append(len(self.dataset))
-        # self.IMPURITY.append(self._impurity_calculation(self.target_preds if criterium in ['gini', 'log_loss'] else self.target_probs, criterium = criterium))
+        # self.IMPURITY.append(self._impurity_calculation(self.targets if criterium in ['gini', 'log_loss'] else self.target_probs, criterium = criterium))
         self.IMPURITY.append(self._impurity_calculation(self.target_probs, criterium = 'gini'))
         self.VALUE.append(final_res[1])
         self.FEATURE.append(int(final_res[0]))
@@ -271,10 +271,10 @@ class ClassificationTree(BaseTree):
         self.NODE_DS.append(dataset_idx)
 
         # 1. Initial information for the tree
-        # node_imp = self._impurity_calculation(self.target_preds[dataset_idx] if criterium in ['gini', 'log_loss'] else self.target_probs[dataset_idx], criterium = criterium)
+        # node_imp = self._impurity_calculation(self.targets[dataset_idx] if criterium in ['gini', 'log_loss'] else self.target_probs[dataset_idx], criterium = criterium)
         node_imp = self._impurity_calculation(self.target_probs[dataset_idx], criterium = 'gini')
 
-        preds_dist = np.bincount(self.target_preds[dataset_idx], minlength = len(self.target_names))
+        preds_dist = np.bincount(self.targets[dataset_idx].ravel(), minlength = len(self.target_names))
         self.N_NODE_SAMPLES.append(len(dataset_idx))
         self.IMPURITY.append(node_imp)
         self.CLASS.append(np.argmax(preds_dist))
@@ -346,7 +346,7 @@ class ClassificationTree(BaseTree):
         """
 
         # 1. Making a prediction for our sample
-        pred, path = self.make_predictions(sample) 
+        pred, path = self.predict(sample, return_path = True) 
 
         # Auxiliary step
         sample = np.array(sample).reshape(1, -1)

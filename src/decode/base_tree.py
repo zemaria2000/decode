@@ -7,7 +7,7 @@ from pathlib import Path
 from .utils import *
 from abc import ABC, abstractmethod
 from typing import Union
-from .logger import logger
+from .logger import configure_logging, logger
 from munch import Munch
 import os, yaml
 import pandas as pd
@@ -62,13 +62,14 @@ class BaseTree(ABC):
         self.root_path = root_path
 
         np.random.seed(self.seed)
+        configure_logging(enabled=use_logging, level=log_level)
 
         if self.model is None:
             raise KeyError("Model instance has not been passed")
         if self.dataset is None:
             raise KeyError("No input dataset has been provided")
         if self.targets is None:
-            raise KeyError("No output targets have been provided. Predictions will be manaully conducted...")
+            logger.warning("No target dataset has been provided. Will use model predictions instead")
         if self.target_names is None:
             logger.warning("No target names have been provided. Replaced by an ordered list of integers")
             self.target_names = [f'Target {i}' for i in range(len(np.unique(targets)))]
@@ -96,56 +97,18 @@ class BaseTree(ABC):
                 self.target_probs = self.model.predict_proba(self.dataset)
             else:
                 logger.warning("Model does not have predict_proba method. Using hard predictions instead.")
-                self.target_probs = self.targets
+                classes = np.unique(self.targets)
+                self.target_probs = np.eye(len(classes), dtype = np.float32)[
+                    np.searchsorted(classes, np.asarray(self.targets).ravel())
+                ]
 
         # Resetting the tree
         self._reset_tree()
 
-        # Defining storage settings
-        self._storage_settings()
-
         # Internal flag that states if the tree is for multi-output or single_output regression
         self.flag_multi_output = True if self.targets.shape[1] > 1 else False
 
-        if use_logging:
-            logger.setLevel(log_level)
-        else:
-            logger.info("User disabled logging for the tree")
-            logger.setLevel(logging.CRITICAL)
-
         logger.info("Initialised tree object")
-
-
-    #########################################################
-    #################### STORAGE FOLDERS ####################
-    #########################################################
-    def _storage_settings(self):
-        """
-            Simple internal function just to define some basic storage folders
-        """
-
-        # Resolving the paths
-        if self.root_path is not None:
-            root = Path(self.root_path).expanduser()
-            # If relative, resolve against cwd
-            if not root.is_absolute():
-                self.root = (cwd / root).resolve()
-        else:
-            cwd = os.getcwd()  # current working directory
-            default_root = cwd
-            self.root = default_root
-        
-        # Base folders for storage
-        self.storage = Munch()
-        self.storage.folders = Munch(
-            figs = os.path.join(self.root, "figures"),
-            results = os.path.join(self.root, "results"),
-            data = os.path.join(self.root, "datasets"),
-            logs = os.path.join(self.root, "logs")
-        )
-
-        # Creating the logs folders
-        os.makedirs(os.path.join(self.root, self.storage.folders.logs), exist_ok = True)
 
 
     #########################################################
@@ -391,11 +354,11 @@ class BaseTree(ABC):
     ##################################################################
 
     @abstractmethod
-    def _impurity_calculation(self, preds: np.ndarray, alpha: float, criterium: str = 'default'):
+    def _impurity_calculation(self, preds: np.ndarray, alpha: float, criterium: str = 'soft_log_loss'):
         """ Impurity calculation handled by the subclass """
         pass
 
-    def _candidate_score(self, dataset_idx: np.ndarray, feature_idx: int, feature_values: np.ndarray, criterium: str = 'default', alpha: float = 0.5):
+    def _candidate_score(self, dataset_idx: np.ndarray, feature_idx: int, feature_values: np.ndarray, criterium: str = 'soft_log_loss', alpha: float = 0.5):
         """
             Auxiliary function that automatically calculates the candidate score for a particular split of the dataset
             Args:
@@ -439,7 +402,7 @@ class BaseTree(ABC):
 
         # Global impurity decreases + checking their compliance with the min_impurity_decrease criterium
         global_impurity_decreases = (n_samples/len(self.dataset))*candidate_scores
-        candidate_scores[global_impurity_decreases <= self.min_impurity_decrease] = np.nan
+        candidate_scores[global_impurity_decreases < self.min_impurity_decrease] = np.nan
 
         # Returning the scores for all possible feature values
         scores = np.full(len(feature_values), np.nan)
@@ -447,13 +410,13 @@ class BaseTree(ABC):
 
         return scores 
 
-    def execute_trial(self, dataset_idx: np.ndarray, step_info: dict, criterium: str = 'default', alpha: float = 0.5):
+    def execute_trial(self, dataset_idx: np.ndarray, step_info: dict, criterium: str = 'soft_log_loss', alpha: float = 0.5):
         """
             Executes a new trial for each feature and its steps, based on the providade dataset
             Args:
                 - dataset_idx (np.ndarray): index, relative to the original dataset (self.dataset), of our current dataset to be assessed
                 - step_info (dict): dictionary with the feature steps information
-                - criterium (str): str that defines the choosing criterium - "default" by default 
+                - criterium (str): str that defines the choosing criterium - "soft_log_loss" by default 
             Returns:
                 - score_list (list): list of tuples that contemplates (feature_idx, feature_value, candidate_score) for each individual step in each feature considered
         """         
@@ -518,7 +481,7 @@ class BaseTree(ABC):
             adaptive: bool = False,
             min_samples_split: int = 2,
             min_impurity_decrease: float = 0.0,
-            criterium: str = 'default',
+            criterium: str = 'soft_log_loss',
             class_weights: Union[None, str, dict] = None,
             alpha: float = 0.5):
         """
